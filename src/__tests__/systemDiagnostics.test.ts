@@ -262,7 +262,16 @@ describe('System Diagnostics & Auto-Repair Subsystem', () => {
       // phrasing in a PASS case.
       if (check!.status === 'passed') {
         expect(check!.message).not.toContain('Network may be intercepted');
-        expect(check!.message).toMatch(/public IP/i);
+        // Two legitimate pass reasons (see comprehensiveChecks.ts):
+        //  (a) DNS returned a real public IP, or
+        //  (b) DNS answers are hijacked to private IPs (VPN / TUN fake-IP
+        //      mode) but end-to-end HTTPS connectivity works — a
+        //      transparent proxy/TUN environment. Branch (b) is common on
+        //      real Windows dev machines behind a VPN/proxy and must still
+        //      count as an honest pass.
+        const isPublicIpPass = /public IP/i.test(check!.message);
+        const isTransparentProxyPass = /transparent proxy\/TUN environment/i.test(check!.message);
+        expect(isPublicIpPass || isTransparentProxyPass).toBe(true);
       }
     });
 

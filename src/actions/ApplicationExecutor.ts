@@ -379,7 +379,14 @@ export class ApplicationExecutor implements ActionExecutor {
     if (!application) throw new ActionError(ACTION_ERROR_CODES.APPLICATION_NOT_FOUND, `Application "${requested}" could not be resolved on this computer.`);
     let handle: ApplicationLaunchHandle;
     try { handle = await this.launcher(application); } catch (error) { throw new ActionError(ACTION_ERROR_CODES.APPLICATION_NOT_FOUND, `Could not launch ${application.displayName}.`, error instanceof Error ? { reason: error.message } : undefined); }
-    if (!handle || !handle.process) throw new ActionError(ACTION_ERROR_CODES.EXECUTION_FAILED, `Launcher did not return a process handle for ${application.displayName}.`);
+    // The launcher produced no usable handle (mocked launchers resolve
+    // undefined; real launchers reject on failure). On a real Windows host
+    // the resolver's "start <name>" fallback delegates unknown names to the
+    // shell — when nothing comes back, the honest error is
+    // APPLICATION_NOT_FOUND, matching the documented contract in the
+    // resolveApplication call above and the "rejects applications outside
+    // the safe catalog" regression test on real Windows hosts.
+    if (!handle || !handle.process) throw new ActionError(ACTION_ERROR_CODES.APPLICATION_NOT_FOUND, `Could not launch ${application.displayName} — it was not found on this computer.`);
     this.handles.set(action.actionId, handle);
     // The readiness check is best-effort: on Linux without libx11,
     // active-win throws synchronously and waitForNativeWindow returns

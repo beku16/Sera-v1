@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
 import { OllamaManager, type ManagedChild } from '../local/ollamaManager';
 import type { OllamaClient } from '../local/OllamaClient';
 
@@ -37,11 +38,27 @@ describe('OllamaManager states', () => {
 
   it('State C: not installed → honest install card message, no spawn', async () => {
     const client = fakeClient(false, false);
-    const manager = new OllamaManager(client, noLogger);
-    const report = await manager.ensureRunning();
-    expect(report.state).toBe('not-installed');
-    expect(report.message).toMatch(/ollama\.com\/download/i);
-    expect(report.message).toMatch(/online mode/i);
+    // Hermetic on real Windows hosts: resolveCli() probes the REAL default
+    // install locations (%LOCALAPPDATA%\Programs\Ollama\ollama.exe etc.)
+    // even when the client reports "not installed". On a Windows machine
+    // that actually has Ollama, that probe would find it, skip State C
+    // entirely, and even spawn a real `ollama serve` for the full 30 s
+    // poll window. Stub the filesystem probe so State C is reached
+    // deterministically on every host.
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+    try {
+      // Tripwire: State C must never spawn anything. A throwing spawnFn
+      // fails the test loudly if that contract is ever broken.
+      const manager = new OllamaManager(client, noLogger, () => {
+        throw new Error('State C must never spawn — spawnFn was called anyway');
+      });
+      const report = await manager.ensureRunning();
+      expect(report.state).toBe('not-installed');
+      expect(report.message).toMatch(/ollama\.com\/download/i);
+      expect(report.message).toMatch(/online mode/i);
+    } finally {
+      existsSpy.mockRestore();
+    }
   });
 
   it('State B: CLI found + daemon down → spawns serve, polls, resolves ready', async () => {
