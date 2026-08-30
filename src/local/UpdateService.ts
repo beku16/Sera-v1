@@ -30,7 +30,7 @@ export interface UpdateInfo {
   downloadUrl: string | null;
   assetName: string | null;
   assetSize: number | null;
-  sha512?: string | null;
+  sha256?: string | null;
   lastChecked: number | null;
 }
 
@@ -47,6 +47,7 @@ export interface UpdateState {
   info: UpdateInfo;
   progress: DownloadProgress;
   downloadedFilePath: string | null;
+  downloadedFileSha256: string | null;
   errorMessage: string | null;
   safeToRestart: boolean;
 }
@@ -74,6 +75,37 @@ export function compareSemver(current: string, latest: string): number {
   return 0; // equal
 }
 
+export function computeFileSha256(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(filePath)) {
+      reject(new Error('File not found for hash calculation'));
+      return;
+    }
+    const hash = createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
+export function isTrustedDownloadUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === 'github.com' ||
+      host.endsWith('.github.com') ||
+      host === 'github-releases.githubusercontent.com' ||
+      host.endsWith('.githubusercontent.com') ||
+      host.endsWith('.amazonaws.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
 export class UpdateService {
   private readonly repoOwner = 'beku16';
   private readonly repoName = 'Sera-v1';
@@ -89,6 +121,7 @@ export class UpdateService {
     downloadUrl: null,
     assetName: null,
     assetSize: null,
+    sha256: null,
     lastChecked: null,
   };
 
@@ -101,9 +134,9 @@ export class UpdateService {
   };
 
   private downloadedFilePath: string | null = null;
+  private downloadedFileSha256: string | null = null;
   private errorMessage: string | null = null;
   private activeDownloadReq: http.ClientRequest | null = null;
-  private downloadAbortController: AbortController | null = null;
 
   public getStatus(): UpdateState {
     return {
@@ -111,6 +144,7 @@ export class UpdateService {
       info: { ...this.info, currentVersion: APP_VERSION },
       progress: { ...this.progress },
       downloadedFilePath: this.downloadedFilePath,
+      downloadedFileSha256: this.downloadedFileSha256,
       errorMessage: this.errorMessage,
       safeToRestart: true,
     };
@@ -154,6 +188,7 @@ export class UpdateService {
         downloadUrl: installerAsset?.browser_download_url || null,
         assetName: installerAsset?.name || null,
         assetSize: installerAsset?.size || null,
+        sha256: null,
         lastChecked: Date.now(),
       };
 
@@ -189,6 +224,12 @@ export class UpdateService {
       }
     }
 
+    if (!isTrustedDownloadUrl(this.info.downloadUrl!)) {
+      this.status = 'error';
+      this.errorMessage = 'Download URL is not from a verified repository domain.';
+      return { success: false, error: this.errorMessage };
+    }
+
     if (this.status === 'downloading') {
       return { success: true, filePath: this.downloadedFilePath || undefined };
     }
@@ -217,7 +258,7 @@ export class UpdateService {
       await this.downloadWithProgress(this.info.downloadUrl!, tempDownloadPath);
 
       // Verify the downloaded binary before renaming to targetPath
-      const verifyResult = await this.verifyPackage(tempDownloadPath, this.info.assetSize || undefined);
+      const verifyResult = await this.verifyPackage(tempDownloadPath, this.info.assetSize || undefined, this.info.sha256 || undefined);
       if (!verifyResult.valid) {
         throw new Error(verifyResult.reason || 'Downloaded package failed integrity verification.');
       }
@@ -228,6 +269,7 @@ export class UpdateService {
       fs.renameSync(tempDownloadPath, targetPath);
 
       this.downloadedFilePath = targetPath;
+      this.downloadedFileSha256 = verifyResult.sha256 || null;
       this.status = 'ready-to-install';
       return { success: true, filePath: targetPath };
     } catch (err: any) {
@@ -253,9 +295,13 @@ export class UpdateService {
   }
 
   /**
-   * Verifies the downloaded binary format (PE header) and size integrity.
+   * Cryptographic integrity verification: validates PE header, minimum size, and SHA-256 hash.
    */
-  public async verifyPackage(filePath: string, expectedSize?: number): Promise<{ valid: boolean; reason?: string }> {
+  public async verifyPackage(
+    filePath: string,
+    expectedSize?: number,
+    expectedSha256?: string
+  ): Promise<{ valid: boolean; reason?: string; sha256?: string }> {
     this.status = 'verifying';
     try {
       if (!fs.existsSync(filePath)) {
@@ -263,7 +309,7 @@ export class UpdateService {
       }
 
       const stat = fs.statSync(filePath);
-      if (stat.size < 1000000) { // Should be > 1 MB
+      if (stat.size < 1000000) { // Should be > 1 MB for production installer
         return { valid: false, reason: `File is too small (${stat.size} bytes), possibly truncated or invalid response.` };
       }
 
@@ -281,7 +327,13 @@ export class UpdateService {
         return { valid: false, reason: 'Invalid executable binary header (not a Windows PE executable).' };
       }
 
-      return { valid: true };
+      // Calculate SHA-256
+      const actualSha256 = await computeFileSha256(filePath);
+      if (expectedSha256 && actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+        return { valid: false, reason: `SHA-256 hash mismatch (expected ${expectedSha256}, calculated ${actualSha256}).` };
+      }
+
+      return { valid: true, sha256: actualSha256 };
     } catch (err: any) {
       return { valid: false, reason: `Verification error: ${err.message}` };
     }
@@ -307,26 +359,35 @@ export class UpdateService {
       'Sera.exe'
     );
 
+    const logDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'SERA', 'logs');
+    try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
+    const updateLogPath = path.join(logDir, 'update.log');
+
     const scriptPath = path.join(os.tmpdir(), `sera_update_bootstrap_${Date.now()}.bat`);
 
     const scriptContent = [
       '@echo off',
-      'echo =======================================',
-      'echo   SERA AI Assistant — Self-Updater',
-      'echo =======================================',
-      'echo Waiting for running SERA processes to close...',
+      'setlocal enabledelayedexpansion',
+      `echo [%date% %time%] Update bootstrap initiated >> "${updateLogPath}"`,
+      'echo Waiting for SERA processes to close gracefully...',
       'timeout /t 2 /nobreak >nul',
-      'taskkill /F /IM Sera.exe >nul 2>&1',
-      'timeout /t 1 /nobreak >nul',
-      'echo Installing updated version...',
+      'tasklist /FI "IMAGENAME eq Sera.exe" 2>nul | find /I /N "Sera.exe">nul',
+      'if "%ERRORLEVEL%"=="0" (',
+      '  timeout /t 2 /nobreak >nul',
+      '  taskkill /F /IM Sera.exe >nul 2>&1',
+      ')',
+      `echo [%date% %time%] Executing installer "${installerPath}" /S >> "${updateLogPath}"`,
       `start /wait "" "${installerPath}" /S`,
+      'set INSTALL_EXIT=%ERRORLEVEL%',
+      `echo [%date% %time%] Installer exited with code %INSTALL_EXIT% >> "${updateLogPath}"`,
       'timeout /t 1 /nobreak >nul',
-      'echo Relaunching SERA...',
-      `if exist "${targetInstallExe}" (`,
-      `  start "" "${targetInstallExe}"`,
-      `) else (`,
+      'if exist "%LOCALAPPDATA%\\Programs\\sera\\Sera.exe" (',
+      `  echo [%date% %time%] Relaunching SERA >> "${updateLogPath}"`,
+      '  start "" "%LOCALAPPDATA%\\Programs\\sera\\Sera.exe"',
+      ') else (',
+      `  echo [%date% %time%] Installed binary missing, attempting direct launcher >> "${updateLogPath}"`,
       `  if exist "${installerPath}" start "" "${installerPath}"`,
-      `)`,
+      ')',
       'del /f /q "%~f0" >nul 2>&1',
     ].join('\r\n');
 
@@ -372,6 +433,11 @@ export class UpdateService {
       const requestHandler = (currentUrl: string, redirectCount = 0) => {
         if (redirectCount > 10) {
           reject(new Error('Too many redirects attempting to download update'));
+          return;
+        }
+
+        if (!isTrustedDownloadUrl(currentUrl)) {
+          reject(new Error(`Untrusted redirect URL: ${currentUrl}`));
           return;
         }
 

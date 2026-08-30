@@ -301,9 +301,7 @@ function startService() {
       path.join(resourcesRoot, 'app.asar.unpacked', 'node_modules'),
       path.join(resourcesRoot, 'node_modules'),
       path.join(__dirname, '..', 'node_modules'),
-    ].filter((p) => {
-      try { return fs.existsSync(p); } catch { return false; }
-    }).join(path.delimiter);
+    ].join(path.delimiter);
   }
   if (enableEmbeddedBrowser) {
     childEnv.BROWSER_CDP_URL = `http://127.0.0.1:${cdpPort}`;
@@ -902,9 +900,7 @@ ipcMain.handle('local-speech-start', () => {
       path.join(process.resourcesPath, 'app.asar', 'node_modules'),
       path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules'),
       path.join(process.resourcesPath, 'node_modules'),
-    ].filter((p) => {
-      try { return fs.existsSync(p); } catch { return false; }
-    }).join(path.delimiter);
+    ].join(path.delimiter);
   }
   const worker = spawn(nodeExecutable, [path.join(__dirname, 'speech-host.cjs')], {
     windowsHide: true,
