@@ -8,7 +8,6 @@ import path from 'path';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { createServer as createViteServer } from 'vite';
 import { defaultBrowserSessionManager, defaultToolManager, defaultScreenController } from './src/tools/toolRegistry';
 import { SERA_SYSTEM_INSTRUCTION, APP_CONFIG } from './src/config/config';
 import { defaultMemoryManager } from './src/memory/MemoryManager';
@@ -2404,6 +2403,7 @@ async function setupApp() {
     typeof __filename === 'string' && __filename.split(path.sep).includes('dist');
   const isProductionServer = process.env.NODE_ENV === 'production' || runningFromBundle || isSeraPackaged();
   if (!isProductionServer) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,

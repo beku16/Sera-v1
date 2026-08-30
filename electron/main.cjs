@@ -67,16 +67,19 @@ function shellLog(line) {
 }
 /** The backend's writable dirs, passed to the child so both processes agree. */
 function childDataEnv() {
+  const defaultUserData = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'SERA');
+  const defaultLocalData = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'SERA');
   return isPackagedApp
     ? {
         SERA_PACKAGED: '1',
         SERA_RESOURCES_PATH: process.resourcesPath,
-        ...(process.env.SERA_USER_DATA ? {} : {
-          SERA_USER_DATA: path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'SERA'),
-          SERA_LOCAL_DATA: path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'SERA'),
-        }),
+        SERA_USER_DATA: process.env.SERA_USER_DATA || defaultUserData,
+        SERA_LOCAL_DATA: process.env.SERA_LOCAL_DATA || defaultLocalData,
       }
-    : {};
+    : {
+        SERA_USER_DATA: process.env.SERA_USER_DATA || defaultUserData,
+        SERA_LOCAL_DATA: process.env.SERA_LOCAL_DATA || defaultLocalData,
+      };
 }
 
 /** Reads the port handshake file the backend writes after binding. */
@@ -141,6 +144,14 @@ function startService() {
   if (useNodeMode) {
     // BUG L6: make SERA.exe behave as node for the child backend.
     childEnv.ELECTRON_RUN_AS_NODE = '1';
+    childEnv.NODE_PATH = [
+      path.join(resourcesRoot, 'app.asar', 'node_modules'),
+      path.join(resourcesRoot, 'app.asar.unpacked', 'node_modules'),
+      path.join(resourcesRoot, 'node_modules'),
+      path.join(__dirname, '..', 'node_modules'),
+    ].filter((p) => {
+      try { return fs.existsSync(p); } catch { return false; }
+    }).join(path.delimiter);
   }
   if (enableEmbeddedBrowser) {
     childEnv.BROWSER_CDP_URL = `http://127.0.0.1:${cdpPort}`;
@@ -151,12 +162,21 @@ function startService() {
   }
   delete childEnv.ELECTRON_RUN_AS_NODE_PARENT; // hygiene
 
+  const targetCwd = isDev
+    ? path.join(__dirname, '..')
+    : (childEnv.SERA_USER_DATA || path.join(os.homedir(), 'AppData', 'Roaming', 'SERA'));
+  try { fs.mkdirSync(targetCwd, { recursive: true }); } catch { /* best-effort */ }
+
   service = spawn(command, args, {
-    cwd: isDev ? path.join(__dirname, '..') : (process.env.SERA_USER_DATA || path.join(os.homedir(), 'sera-cwd')),
+    cwd: targetCwd,
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     shell: isDev && process.platform === 'win32',
+  });
+
+  service.on('error', (err) => {
+    shellLog(`backend spawn error: ${err.message}`);
   });
 
   // Port handshake: stdout marker first, handshake file as backup.
@@ -636,7 +656,16 @@ ipcMain.handle('local-speech-start', () => {
   // even Add-Type could fail, killing wake-word on machines where the same
   // worker ran fine from a normal shell. Inherit the FULL environment.
   const speechEnv = { ...process.env };
-  if (isPackagedApp) speechEnv.ELECTRON_RUN_AS_NODE = '1';
+  if (isPackagedApp) {
+    speechEnv.ELECTRON_RUN_AS_NODE = '1';
+    speechEnv.NODE_PATH = [
+      path.join(process.resourcesPath, 'app.asar', 'node_modules'),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules'),
+      path.join(process.resourcesPath, 'node_modules'),
+    ].filter((p) => {
+      try { return fs.existsSync(p); } catch { return false; }
+    }).join(path.delimiter);
+  }
   const worker = spawn(nodeExecutable, [path.join(__dirname, 'speech-host.cjs')], {
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],

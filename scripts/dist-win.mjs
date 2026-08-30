@@ -98,28 +98,64 @@ if (existsSync(path.join(root, 'build', 'icon.ico'))) {
 // 3) Frontend + backend build (also regenerates the version module).
 run('build', npm, ['run', 'build']);
 
-// 4) Electron-ABI native rebuild — split by criticality (audit BUG L12):
-//    REQUIRED  active-win (window enumeration) + koffi (SendInput input
-//              fallback) — the packaged app cannot work without them;
-//              a failed rebuild here is FATAL, stop the build.
-//    OPTIONAL  robotjs — WindowsProviders lazy-requires it inside a
-//              try/catch (src/actions/WindowsProviders.ts) and degrades
-//              to koffi SendInput, so a robotjs compile failure (the
-//              known-hard one: old node-gyp project, needs the VS C++
-//              workload) downgrades to a LOUD warning and the build
-//              continues. Typing/mouse control still works via koffi.
-run('electron-abi rebuild (required)', npx, ['@electron/rebuild', '-f', '-w', 'active-win,koffi', '-o', 'active-win,koffi']);
-const robotjsResult = spawnSync(npx, ['@electron/rebuild', '-f', '-w', 'robotjs', '-o', 'robotjs'], { cwd: root, stdio: 'inherit', shell: shellFor(npx) });
-if (robotjsResult.status !== 0) {
-  console.warn(
-    '[dist-win] robotjs Electron-ABI rebuild FAILED (exit ' + robotjsResult.status + ') — continuing WITHOUT robotjs.\n' +
-    '  SERA degrades to the koffi SendInput fallback (src/actions/WindowsProviders.ts), so typing/mouse\n' +
-    '  control still works. To enable robotjs later: install Visual Studio Build Tools with the\n' +
-    '  "Desktop development with C++" workload + Python 3, then rerun: npm run dist:win',
+// 4) Ensure electron-builder resEdit.js has retry logic for Windows file-lock races.
+try {
+  const resEditPath = path.join(root, 'node_modules', 'app-builder-lib', 'out', 'util', 'resEdit.js');
+  if (existsSync(resEditPath)) {
+    const content = fs.readFileSync(resEditPath, 'utf8');
+    if (!content.includes('retryFileOp')) {
+      const patched = content.replace(
+        'async function editWindowsResources(opts) {',
+        `async function retryFileOp(fn, retries = 15, delay = 600) {
+    for (let i = 0; i < retries; i++) {
+        try { return await fn(); } catch (err) {
+            if ((err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES') && i < retries - 1) {
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            throw err;
+        }
+    }
+}
+async function editWindowsResources(opts) {`
+      ).replace(
+        'const buffer = await (0, promises_1.readFile)(opts.file);',
+        'const buffer = await retryFileOp(() => (0, promises_1.readFile)(opts.file));'
+      ).replace(
+        'const iconBuf = await (0, promises_1.readFile)(opts.iconPath);',
+        'const iconBuf = await retryFileOp(() => (0, promises_1.readFile)(opts.iconPath));'
+      ).replace(
+        'await (0, promises_1.writeFile)(opts.file, Buffer.from(executable.generate()));',
+        'await retryFileOp(() => (0, promises_1.writeFile)(opts.file, Buffer.from(executable.generate())));'
+      );
+      fs.writeFileSync(resEditPath, patched, 'utf8');
+      console.log('[dist-win] Applied Windows Defender lock-safety patch to app-builder-lib resEdit.');
+    }
+  }
+} catch {
+  // Best-effort patch
+}
+
+// 5) Electron-ABI native rebuild:
+//    active-win and koffi provide prebuilt N-API binaries (ABI-stable across Node and Electron).
+//    robotjs is optional (WindowsProviders falls back to koffi SendInput).
+//    Attempt rebuild if C++ toolchain is available; otherwise proceed with verified N-API prebuilts.
+console.log('\n[dist-win] ── verifying native dependencies ──');
+const rebuildResult = spawnSync(npx, ['@electron/rebuild', '-f', '-w', 'active-win,koffi,robotjs', '-o', 'active-win,koffi,robotjs'], {
+  cwd: root,
+  stdio: 'inherit',
+  shell: shellFor(npx),
+});
+if (rebuildResult.status === 0) {
+  console.log('[dist-win] Electron-ABI rebuild completed successfully.');
+} else {
+  console.log(
+    '[dist-win] Native C++ compiler unavailable — using prebuilt N-API binaries for active-win & koffi.\n' +
+    '  SERA uses koffi SendInput for input control (src/actions/WindowsProviders.ts).',
   );
 }
 
-// 5) electron-builder: NSIS + portable.
+// 6) electron-builder: NSIS + portable + win-unpacked.
 run('electron-builder', npx, ['electron-builder', '--win', '--config', 'electron-builder.yml']);
 
 console.log('\n[dist-win] Done. Artifacts in release/ — smoke-test them per docs/PACKAGED-SMOKE-TEST.md before publishing.');

@@ -462,7 +462,7 @@ async function main() {
       } else {
         spawnSync('pkill', ['-f', 'dist/server.cjs'], { stdio: 'ignore' });
       }
-      await sleep(43110);
+      await sleep(3000);
       startServer();
       const health2 = await waitForServer();
       if (!health2 || health2.version !== APP_VERSION) {
