@@ -19,7 +19,9 @@ import { getPaletteConfig } from './config/palettes';
 import { DiagnosticsModal } from './components/DiagnosticsModal/DiagnosticsModal';
 import { StartupLauncherModal } from './components/StartupLauncherModal/StartupLauncherModal';
 import { UninstallModal } from './components/UninstallModal/UninstallModal';
+import { UpdateNotificationToast } from './components/UpdateNotificationToast/UpdateNotificationToast';
 import { ModeSwitchState } from './components/MicrophoneButton/MicControl';
+import { useUpdater } from './hooks/useUpdater';
 import type { AssistantSettings } from './types';
 // Build-time constant from package.json — used to re-show the startup wizard
 // once per app version (localStorage survives reinstalls, so the old
@@ -164,9 +166,22 @@ export default function App() {
   const [isTranscriptsOpen, setIsTranscriptsOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<'transcripts' | 'tools'>('transcripts');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models'>('atmosphere');
+  const [settingsTab, setSettingsTab] = useState<'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models' | 'updates'>('atmosphere');
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isUninstallOpen, setIsUninstallOpen] = useState(false);
+
+  const {
+    updateState,
+    isNotificationVisible,
+    check: checkForUpdates,
+    download: downloadUpdate,
+    cancel: cancelUpdateDownload,
+    installAndRestart: installUpdateAndRestart,
+    dismissNotification,
+  } = useUpdater({
+    settings,
+    onUpdateSettings: updateSettings,
+  });
 
   // Synchronize voice-command or text-command triggered uninstallation intent
   useEffect(() => {
@@ -442,6 +457,26 @@ export default function App() {
           setIsSettingsOpen(false);
           setIsUninstallOpen(true);
         }}
+        updateState={updateState}
+        onCheckForUpdates={checkForUpdates}
+        onDownloadUpdate={downloadUpdate}
+        onCancelDownload={cancelUpdateDownload}
+        onInstallAndRestart={installUpdateAndRestart}
+      />
+
+      {/* Subtle In-App Update Notification Toast */}
+      <UpdateNotificationToast
+        isVisible={isNotificationVisible}
+        updateState={updateState}
+        paletteId={settings.palette}
+        customColor={settings.customColor}
+        onUpdateNow={downloadUpdate}
+        onViewDetails={() => {
+          dismissNotification(0);
+          setSettingsTab('updates');
+          setIsSettingsOpen(true);
+        }}
+        onLater={() => dismissNotification(24)}
       />
 
       {/* Secure Uninstallation & Data Protection Modal */}

@@ -115,6 +115,54 @@ export interface AssistantSettings {
    * Turn OFF for full manual control via the mic button.
    */
   wakeWordEnabled?: boolean;
+  /** Update policy preference */
+  updateBehavior?: 'ask' | 'auto_download' | 'auto_install';
+  /** Last dismissed / snoozed update version to prevent notification spam */
+  snoozedUpdateVersion?: string;
+  /** Timestamp until when update notifications for the snoozed version are suppressed */
+  snoozedUntil?: number;
+}
+
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'update-available'
+  | 'downloading'
+  | 'verifying'
+  | 'ready-to-install'
+  | 'installing'
+  | 'restarting'
+  | 'error';
+
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseName: string | null;
+  releaseNotes: string | null;
+  releaseDate: string | null;
+  downloadUrl: string | null;
+  assetName: string | null;
+  assetSize: number | null;
+  lastChecked: number | null;
+}
+
+export interface DownloadProgress {
+  bytesDownloaded: number;
+  totalBytes: number;
+  percent: number;
+  speedBytesPerSec: number;
+  etaSeconds: number | null;
+}
+
+export interface UpdateState {
+  status: UpdateStatus;
+  info: UpdateInfo;
+  progress: DownloadProgress;
+  downloadedFilePath: string | null;
+  errorMessage: string | null;
+  safeToRestart: boolean;
 }
 
 export interface TranscriptItem {

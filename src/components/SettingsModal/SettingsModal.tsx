@@ -22,8 +22,9 @@ import {
   KeyRound,
   Boxes,
   Monitor,
+  ArrowUpCircle,
 } from 'lucide-react';
-import { AssistantSettings, ColorPaletteId, VoiceName } from '../../types';
+import { AssistantSettings, ColorPaletteId, VoiceName, UpdateState } from '../../types';
 import { PREDEFINED_PALETTES, getPaletteConfig } from '../../config/palettes';
 import { APP_CONFIG } from '../../config/config';
 import { MemorySettingsTab } from './MemorySettingsTab';
@@ -31,6 +32,7 @@ import { SpeakerRecognitionTab } from './SpeakerRecognitionTab';
 import { ApiKeySettingsTab } from './ApiKeySettingsTab';
 import { ModelsProvidersTab } from './ModelsProvidersTab';
 import { MyPcTab } from './MyPcTab';
+import { UpdatesSettingsTab } from './UpdatesSettingsTab';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -38,11 +40,17 @@ interface SettingsModalProps {
   settings: AssistantSettings;
   onUpdateSettings: (newSettings: Partial<AssistantSettings>) => void;
   /** Tab the modal opens on (voice console shortcut opens MIC & SPEAKERS). */
-  initialTab?: 'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models';
+  initialTab?: 'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models' | 'updates';
   /** v1.8.4: reopens the startup wizard (mode selection + setup instructions). */
   onOpenSetupWizard?: () => void;
   /** Opens the secure uninstallation modal */
   onOpenUninstall?: () => void;
+  /** In-app self-update state and controllers */
+  updateState?: UpdateState;
+  onCheckForUpdates?: () => Promise<any>;
+  onDownloadUpdate?: () => Promise<void>;
+  onCancelDownload?: () => Promise<void>;
+  onInstallAndRestart?: () => Promise<void>;
 }
 
 interface MediaDeviceInfoItem {
@@ -91,8 +99,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   initialTab = 'atmosphere',
   onOpenSetupWizard,
   onOpenUninstall,
+  updateState,
+  onCheckForUpdates,
+  onDownloadUpdate,
+  onCancelDownload,
+  onInstallAndRestart,
 }) => {
-  const [activeTab, setActiveTab] = useState<'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models' | 'updates'>(initialTab);
   const [copied, setCopied] = useState(false);
 
   // Every open honors the requested tab — e.g. the voice deck's sliders
@@ -593,6 +606,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
           <button type="button" onClick={() => setActiveTab('models')} className={`${tabBase} ${activeTab === 'models' ? tabActive : tabIdle}`}>
             <Boxes className="h-3.5 w-3.5" /> MODELS
+          </button>
+          <button type="button" onClick={() => setActiveTab('updates')} className={`${tabBase} ${activeTab === 'updates' ? tabActive : tabIdle}`}>
+            <span className="relative flex items-center gap-1.5">
+              <ArrowUpCircle className="h-3.5 w-3.5" /> UPDATES
+              {updateState?.info.hasUpdate && (
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
+              )}
+            </span>
           </button>
         </div>
 
@@ -1246,6 +1267,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           ) : activeTab === 'models' ? (
             <ModelsProvidersTab />
+
+          ) : activeTab === 'updates' ? (
+            <UpdatesSettingsTab
+              updateState={
+                updateState || {
+                  status: 'idle',
+                  info: {
+                    hasUpdate: false,
+                    currentVersion: '1.9.0',
+                    latestVersion: null,
+                    releaseName: null,
+                    releaseNotes: null,
+                    releaseDate: null,
+                    downloadUrl: null,
+                    assetName: null,
+                    assetSize: null,
+                    lastChecked: null,
+                  },
+                  progress: { bytesDownloaded: 0, totalBytes: 0, percent: 0, speedBytesPerSec: 0, etaSeconds: null },
+                  downloadedFilePath: null,
+                  errorMessage: null,
+                  safeToRestart: true,
+                }
+              }
+              settings={settings}
+              onUpdateSettings={onUpdateSettings}
+              onCheckForUpdates={onCheckForUpdates || (async () => {})}
+              onDownloadUpdate={onDownloadUpdate || (async () => {})}
+              onCancelDownload={onCancelDownload || (async () => {})}
+              onInstallAndRestart={onInstallAndRestart || (async () => {})}
+            />
 
           ) : (
             <SpeakerRecognitionTab

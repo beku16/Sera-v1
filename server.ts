@@ -24,6 +24,7 @@ import { LocalAgentEngine } from './src/local/LocalAgentEngine';
 import { LocalWhisperStt, LocalPiperTts } from './src/local/LocalSpeechEngines';
 import { defaultApiKeyVault, ApiProvider, API_PROVIDERS } from './src/local/ApiKeyVault';
 import { defaultUninstallService } from './src/local/UninstallService';
+import { defaultUpdateService } from './src/local/UpdateService';
 import { installProxySupport, auditHostResolution, logHostResolutionAudit } from './src/local/proxySupport';
 import { verdictForPull } from './src/local/diskSpace';
 import { defaultOllamaManager } from './src/local/ollamaManager';
@@ -434,6 +435,56 @@ app.post('/api/uninstall/execute', heavyApiLimiter, async (req, res) => {
       preserveMemory: preserveMemory !== false,
       preserveEngines: preserveEngines === true,
     });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// ─── In-App Self-Update Endpoints ───────────────────────────────────────────
+app.get('/api/update/status', (_req, res) => {
+  try {
+    const status = defaultUpdateService.getStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get('/api/update/check', async (_req, res) => {
+  try {
+    await defaultUpdateService.checkForUpdates();
+    const status = defaultUpdateService.getStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/update/download', heavyApiLimiter, async (_req, res) => {
+  try {
+    // Start asynchronous download and return current status
+    void defaultUpdateService.startDownload();
+    const status = defaultUpdateService.getStatus();
+    res.json({ success: true, status });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/update/cancel', (_req, res) => {
+  try {
+    defaultUpdateService.cancelDownload();
+    const status = defaultUpdateService.getStatus();
+    res.json({ success: true, status });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/update/install', heavyApiLimiter, async (_req, res) => {
+  try {
+    const result = await defaultUpdateService.applyUpdateAndRestart();
     res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
