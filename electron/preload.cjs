@@ -18,6 +18,15 @@ contextBridge.exposeInMainWorld('seraDesktop', {
   startLocalSpeech: () => ipcRenderer.invoke('local-speech-start'),
   stopLocalSpeech: () => ipcRenderer.invoke('local-speech-stop'),
   getLocalSpeechState: () => ipcRenderer.invoke('local-speech-state'),
+  getAutoStart: () => ipcRenderer.invoke('sera-get-autostart'),
+  setAutoStart: (enable) => ipcRenderer.invoke('sera-set-autostart', enable),
+  showNotification: (title, body) => ipcRenderer.invoke('sera-show-notification', title, body),
+  minimizeToTray: () => ipcRenderer.invoke('sera-minimize-to-tray'),
+  onTrayAction: (listener) => {
+    const handler = (_event, action) => listener(action);
+    ipcRenderer.on('sera-tray-action', handler);
+    return () => ipcRenderer.removeListener('sera-tray-action', handler);
+  },
   onLocalSpeechTranscript: (listener) => {
     let transcriptCount = 0;
     const handler = (_event, payload) => {

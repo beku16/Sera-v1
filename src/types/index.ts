@@ -9,6 +9,11 @@ declare global {
       startLocalSpeech: () => Promise<{ state: string; pid: number | null; exitCode: number | null } | boolean>;
       stopLocalSpeech: () => Promise<boolean>;
       getLocalSpeechState: () => Promise<{ state: string; pid: number | null; exitCode: number | null; owners: number }>;
+      getAutoStart?: () => Promise<boolean>;
+      setAutoStart?: (enable: boolean) => Promise<boolean>;
+      showNotification?: (title: string, body: string) => Promise<void>;
+      minimizeToTray?: () => Promise<void>;
+      onTrayAction?: (listener: (action: string) => void) => () => void;
       onLocalSpeechTranscript: (listener: (payload: { text?: string; confidence?: number; mainTranscriptCount?: number; preloadTranscriptCount?: number }) => void) => () => void;
       onLocalSpeechStatus: (listener: (payload: { status?: string; message?: string }) => void) => () => void;
       onLocalSpeechError: (listener: (payload: { message?: string }) => void) => () => void;

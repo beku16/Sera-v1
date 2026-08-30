@@ -19,7 +19,8 @@
 # Build:  npm run dist:win   (scripts/dist-win.mjs orchestrates everything)
 
 appId: com.beku16.sera
-productName: SERA
+productName: Sera
+executableName: Sera
 copyright: MIT License
 
 directories:
@@ -68,6 +69,7 @@ buildDependenciesFromSource: false
 
 win:
   icon: build/icon.ico
+  executableName: Sera
   target:
     - target: nsis
       arch:
@@ -83,9 +85,9 @@ nsis:
   allowToChangeInstallationDirectory: false
   createStartMenuShortcut: true
   createDesktopShortcut: true
-  shortcutName: SERA
+  shortcutName: Sera
   deleteAppDataOnUninstall: false
-  artifactName: SERA Setup ${version}.${ext}
+  artifactName: Sera Installer.${ext}
 
 portable:
-  artifactName: SERA Portable ${version}.${ext}
+  artifactName: Sera Portable.${ext}

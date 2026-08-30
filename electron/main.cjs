@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, shell, session, clipboard } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain, shell, session, clipboard, Tray, Menu, Notification, nativeImage, screen } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -46,6 +46,158 @@ let shuttingDown = false;
 // Resolved at startup (whenReady) and used by createWindow for the window
 // icon. Module-level because createWindow lives outside the whenReady scope.
 let windowIconPath = null;
+let tray = null;
+let hasShownTrayNotification = false;
+
+/* ── Window State Persistence ────────────────────────────────────── */
+function getWindowStateFile() {
+  const dir = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'SERA');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* best effort */ }
+  return path.join(dir, 'window-state.json');
+}
+
+function loadWindowState() {
+  try {
+    const raw = fs.readFileSync(getWindowStateFile(), 'utf8');
+    const state = JSON.parse(raw);
+    if (state && typeof state === 'object') return state;
+  } catch { /* fallback */ }
+  return {
+    width: 1440,
+    height: 960,
+    closeToTray: true,
+    startMinimized: false,
+  };
+}
+
+let saveStateTimer = null;
+function saveWindowState(updates) {
+  if (saveStateTimer) clearTimeout(saveStateTimer);
+  saveStateTimer = setTimeout(() => {
+    try {
+      const current = loadWindowState();
+      const merged = { ...current, ...updates };
+      fs.writeFileSync(getWindowStateFile(), JSON.stringify(merged, null, 2), 'utf8');
+    } catch { /* best effort */ }
+  }, 250);
+}
+
+/* ── System Tray ─────────────────────────────────────────────────── */
+function createTray() {
+  if (tray) return;
+  const iconCandidate = windowIconPath || path.join(__dirname, '..', 'public', 'icons', 'icon-64.png');
+  let trayImage;
+  try {
+    trayImage = nativeImage.createFromPath(iconCandidate).resize({ width: 16, height: 16 });
+  } catch {
+    trayImage = null;
+  }
+  if (!trayImage || trayImage.isEmpty()) {
+    try {
+      const icoCandidate = path.join(__dirname, '..', 'build', 'icon.ico');
+      trayImage = nativeImage.createFromPath(icoCandidate).resize({ width: 16, height: 16 });
+    } catch { /* fallback */ }
+  }
+
+  try {
+    tray = new Tray(trayImage || iconCandidate);
+    tray.setToolTip('SERA — Windows Voice AI Assistant');
+    updateTrayMenu();
+
+    tray.on('click', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        createWindow();
+        return;
+      }
+      if (mainWindow.isVisible()) {
+        if (mainWindow.isFocused()) {
+          mainWindow.hide();
+        } else {
+          mainWindow.focus();
+        }
+      } else {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+
+    tray.on('double-click', () => {
+      focusWindow();
+    });
+  } catch (err) {
+    shellLog(`tray creation warning: ${err.message}`);
+  }
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
+  const state = loadWindowState();
+  let isAutoStart = false;
+  try { isAutoStart = app.getLoginItemSettings().openAtLogin; } catch { /* best effort */ }
+  const isSpeechRunning = localSpeechState === 'STARTED' || localSpeechState === 'STARTING';
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Open SERA',
+      click: () => focusWindow(),
+    },
+    {
+      label: isSpeechRunning ? 'Pause Voice Listening' : 'Start Voice Mode',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('sera-tray-action', isSpeechRunning ? 'voice-stop' : 'voice-start');
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Start with Windows',
+      type: 'checkbox',
+      checked: isAutoStart,
+      click: (item) => {
+        try { app.setLoginItemSettings({ openAtLogin: item.checked, openAsHidden: true }); } catch { /* best effort */ }
+      },
+    },
+    {
+      label: 'Close to System Tray',
+      type: 'checkbox',
+      checked: state.closeToTray !== false,
+      click: (item) => {
+        saveWindowState({ closeToTray: item.checked });
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Open Log Folder',
+      click: () => shell.openPath(electronLogDir()),
+    },
+    { type: 'separator' },
+    {
+      label: 'Restart SERA',
+      click: () => {
+        serviceRetries = 0;
+        if (service && !service.killed) service.kill();
+        startService();
+        waitForService().then(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.reload();
+          }
+        }).catch((err) => console.error('[RESTART_ERROR]', err.message));
+      },
+    },
+    {
+      label: 'Quit SERA',
+      click: () => {
+        shuttingDown = true;
+        if (service && !service.killed) service.kill();
+        if (localSpeech && !localSpeech.killed) localSpeech.kill();
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+}
 
 /* ── v1.9.0 paths + logging ──────────────────────────────────────── */
 function seraHomeDir() {
@@ -260,6 +412,30 @@ function showBackendCrashWindow(code, signal) {
 }
 
 async function createWindow() {
+  const state = loadWindowState();
+  let x = state.x;
+  let y = state.y;
+  let width = Number(state.width) || 1440;
+  let height = Number(state.height) || 960;
+
+  // Validate bounds against active displays
+  if (typeof x === 'number' && typeof y === 'number') {
+    try {
+      const displays = screen.getAllDisplays();
+      const visible = displays.some((d) => {
+        const b = d.bounds;
+        return x >= b.x - 50 && x <= b.x + b.width - 50 && y >= b.y - 50 && y <= b.y + b.height - 50;
+      });
+      if (!visible) {
+        x = undefined;
+        y = undefined;
+      }
+    } catch {
+      x = undefined;
+      y = undefined;
+    }
+  }
+
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === 'media');
   });
@@ -269,11 +445,7 @@ async function createWindow() {
   // with NotSupportedError in every Electron >= 22 (see the block above).
   registerDisplayMediaHandler();
 
-  // Enforce a Content Security Policy on the renderer. Previously no CSP
-  // was set, leaving the renderer vulnerable to injected-content / data-URL
-  // exfiltration attacks. The CSP allows same-origin script/style/font/
-  // image plus ws: for the live-audio WebSocket and 'unsafe-inline' for
-  // the inline styles Vite/Tailwind generate at runtime.
+  // Enforce a Content Security Policy on the renderer.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -293,12 +465,13 @@ async function createWindow() {
   });
 
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 960,
+    ...(typeof x === 'number' && typeof y === 'number' ? { x, y } : {}),
+    width,
+    height,
     title: 'SERA - Voice AI Assistant',
     backgroundColor: '#05070B',
     autoHideMenuBar: true,
-    show: true,
+    show: false,
     ...(windowIconPath ? { icon: windowIconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -308,9 +481,48 @@ async function createWindow() {
     },
   });
 
-  // Block top-level navigation away from the local server. Without this, an
-  // XSS or accidental link click could redirect the Electron renderer to an
-  // attacker-controlled URL and escape the sandbox.
+  if (state.isMaximized) {
+    mainWindow.maximize();
+  }
+
+  mainWindow.on('resize', () => {
+    if (!mainWindow.isMaximized()) {
+      const bounds = mainWindow.getBounds();
+      saveWindowState({ width: bounds.width, height: bounds.height });
+    }
+  });
+
+  mainWindow.on('move', () => {
+    if (!mainWindow.isMaximized()) {
+      const bounds = mainWindow.getBounds();
+      saveWindowState({ x: bounds.x, y: bounds.y });
+    }
+  });
+
+  mainWindow.on('maximize', () => saveWindowState({ isMaximized: true }));
+  mainWindow.on('unmaximize', () => saveWindowState({ isMaximized: false }));
+
+  mainWindow.on('close', (event) => {
+    if (shuttingDown) return;
+    const currentState = loadWindowState();
+    if (currentState.closeToTray !== false) {
+      event.preventDefault();
+      mainWindow.hide();
+      if (!hasShownTrayNotification) {
+        hasShownTrayNotification = true;
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'SERA is running in the background',
+            body: 'SERA is minimized to the system tray. Click the tray icon to reopen.',
+            ...(windowIconPath ? { icon: windowIconPath } : {}),
+          }).show();
+        }
+      }
+      return;
+    }
+  });
+
+  // Block top-level navigation away from the local server.
   mainWindow.webContents.on('will-navigate', (event, url) => {
     try {
       const parsed = new URL(url);
@@ -324,8 +536,6 @@ async function createWindow() {
     }
   });
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    // Force all window.open() calls into the user's default browser, never
-    // into another Electron window where nodeIntegration could be re-armed.
     if (typeof details.url === 'string' && /^https?:\/\//i.test(details.url)) {
       void shell.openExternal(details.url);
     }
@@ -333,20 +543,20 @@ async function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-    mainWindow.focus();
+    if (!state.startMinimized) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
   });
 
   const uiUrl = `http://localhost:${resolvedPort}`;
   await mainWindow.loadURL(uiUrl);
-  mainWindow.show();
-  mainWindow.focus();
-  mainWindow.setAlwaysOnTop(true);
-  mainWindow.setAlwaysOnTop(false);
+  if (!state.startMinimized) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
   mainWindow.on('closed', () => {
     mainWindow = null;
-    // The picker is a child of this window; never leave it orphaned behind
-    // a closed main window (denies any pending share request).
     if (pendingDisplayRequest) settleDisplayRequest({});
     else closeScreenPicker();
   });
@@ -403,6 +613,36 @@ ipcMain.handle('sera-clipboard-write', (_event, text) => {
   } catch {
     return false;
   }
+});
+
+ipcMain.handle('sera-get-autostart', () => {
+  try { return app.getLoginItemSettings().openAtLogin; } catch { return false; }
+});
+
+ipcMain.handle('sera-set-autostart', (_event, enable) => {
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enable), openAsHidden: true });
+    updateTrayMenu();
+    return app.getLoginItemSettings().openAtLogin;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('sera-show-notification', (_event, title, body) => {
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: String(title || 'SERA'),
+        body: String(body || ''),
+        ...(windowIconPath ? { icon: windowIconPath } : {}),
+      }).show();
+    }
+  } catch { /* best effort */ }
+});
+
+ipcMain.handle('sera-minimize-to-tray', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
 });
 
 // Quit from the in-app power button (v1.9.0 — BUG L10/M9 FIX): kill ONLY
@@ -803,6 +1043,7 @@ app.whenReady().then(async () => {
     if (fs.existsSync(candidate)) windowIconPath = candidate;
   } catch {}
 
+  createTray();
   startService();
   await waitForService();
   await createWindow();
