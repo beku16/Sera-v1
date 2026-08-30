@@ -1,0 +1,89 @@
+{
+  "name": "sera",
+  "description": "Local-first real-time voice AI assistant \u2014 runs 100% offline with Ollama or online with Gemini Live, with a 36-tool computer-control agent, system diagnostics, and a double-click launcher.",
+  "version": "1.9.0",
+  "private": true,
+  "license": "MIT",
+  "keywords": [
+    "voice-assistant",
+    "ai-assistant",
+    "local-llm",
+    "ollama",
+    "gemini",
+    "speech-to-text",
+    "text-to-speech",
+    "computer-control",
+    "electron",
+    "react",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beku16/sera.git"
+  },
+  "bugs": {
+    "url": "https://github.com/beku16/sera/issues"
+  },
+  "homepage": "https://github.com/beku16/sera#readme",
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "desktop:dev": "cross-env SERA_DEV=true electron electron/main.cjs",
+    "desktop": "npm run build && electron electron/main.cjs",
+    "build": "node scripts/write-version.mjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --log-override:empty-import-meta=silent --outfile=dist/server.cjs",
+    "start": "node scripts/launcher.mjs",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit",
+    "setup:ocr": "node scripts/setup-ocr.mjs",
+    "postinstall": "playwright install chromium",
+    "serve": "node dist/server.cjs",
+    "predev": "node scripts/write-version.mjs",
+    "dist": "electron-builder --config electron-builder.yml",
+    "dist:win": "node scripts/dist-win.mjs",
+    "icon": "python3 build/icon-builder.py"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "active-win": "^8.2.1",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "jpeg-js": "^0.4.4",
+    "koffi": "^3.1.6",
+    "lucide-react": "^0.546.0",
+    "playwright": "^1.62.1",
+    "pngjs": "^7.0.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "robotjs": "^0.9.1",
+    "tesseract.js": "^7.0.0",
+    "three": "^0.185.1",
+    "undici": "^8.10.0",
+    "vite": "^6.2.3",
+    "win32-api": "^26.1.2",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/three": "^0.185.4",
+    "@types/ws": "^8.18.1",
+    "electron": "^43.4.1",
+    "esbuild": "^0.25.0",
+    "jsdom": "^30.0.1",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3",
+    "vitest": "^4.1.11",
+    "electron-builder": "^26.0.12",
+    "@electron/rebuild": "^4.0.1"
+  },
+  "main": "electron/main.cjs"
+}

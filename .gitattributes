@@ -1,0 +1,12 @@
+# Keep Windows launchers CRLF so they always execute correctly after
+# cloning/checkout on any platform; POSIX scripts stay LF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+
+# Binary assets — never normalize or diff these.
+*.png binary
+*.jpg binary
+*.ico binary
+*.traineddata binary

@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production / Build output
+dist/
+build/
+coverage/
+
+# Local data & memories
+.data/
+sera_memories*.json
+sera_memories.json
+
+# Launcher / server runtime logs
+sera-server.log
+
+# Backups & Temp files
+backups/
+tmp/
+*.bak
+*.bak.*
+.scratch/
+
+# Environment and Secrets (Never commit API keys)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+!.env.example
+
+# Logs & Debugging
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Mistake learning memory
+sera_mistake_memory*.json
+sera_api_vault*
+
+# Large binary assets (restored via: npm run setup:ocr)
+eng.traineddata
+
+# Model orchestration runtime state (per-machine, never committed)
+sera_providers.json
+sera_cost_ledger.json
+sera_model_performance.json
+
+# v1.9.0: packaging + per-user data artifacts (real user data lives in
+# %APPDATA%\SERA and %LOCALAPPDATA%\SERA — never in the repo)
+release/
+ocr-data/
+sera.port
+electron-log/
+*.traineddata

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/beku16/sera#readme
+    about: Setup, configuration, and the full troubleshooting guide live in the README.
+  - name: Security vulnerabilities
+    url: https://github.com/beku16/sera/blob/main/SECURITY.md
+    about: Please do not open public issues for security problems.

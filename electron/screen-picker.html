@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  SERA native screen picker (shown by electron/main.cjs when the app calls
+  navigator.mediaDevices.getDisplayMedia()).
+
+  Security model: this page is loaded from disk in its own sandboxed,
+  context-isolated window whose only capability is the three-call
+  `seraScreenPicker` bridge (see picker-preload.cjs). It loads no remote
+  content of any kind; the CSP below exists as defense-in-depth — inline
+  script/style are allowed because the whole page is one static file we
+  ship, and every dynamic string (source names) is inserted with
+  textContent, never as markup.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Choose what to share</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    background: #05070B; color: #e8ecf4;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 14px; overflow: hidden;
+  }
+  header { padding: 20px 24px 12px; flex: none; }
+  h1 { font-size: 19px; font-weight: 600; letter-spacing: .2px; }
+  header p { margin-top: 6px; color: #9aa7bd; font-size: 13px; }
+  main {
+    flex: 1; overflow-y: auto; padding: 4px 24px 12px;
+  }
+  main::-webkit-scrollbar { width: 10px; }
+  main::-webkit-scrollbar-thumb { background: #1c2433; border-radius: 6px; }
+  section { margin-bottom: 18px; }
+  h2 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #7c8aa5; margin: 10px 0 10px;
+  }
+  .grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
+  }
+  .card {
+    display: flex; flex-direction: column; gap: 8px;
+    background: #0b0f17; border: 1px solid #1c2433; border-radius: 10px;
+    padding: 8px; cursor: pointer; text-align: left;
+    color: inherit; font: inherit; transition: border-color .12s, background .12s, transform .12s;
+  }
+  .card:hover { border-color: #6ea8ff; background: #0d1420; }
+  .card:active { transform: scale(.985); }
+  .card:focus-visible { outline: 2px solid #6ea8ff; outline-offset: 2px; }
+  .thumb {
+    aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden;
+    background: #070a11; display: flex; align-items: center; justify-content: center;
+    border: 1px solid #141b28;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .nothumb { color: #55617a; font-size: 12px; }
+  .label {
+    display: flex; align-items: center; gap: 7px;
+    min-width: 0; padding: 0 2px 2px;
+  }
+  .appicon { width: 16px; height: 16px; flex: none; border-radius: 3px; }
+  .name {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 13px; color: #dbe3f0;
+  }
+  .screen .name { color: #cfe0ff; }
+  footer {
+    flex: none; display: flex; justify-content: flex-end; gap: 10px;
+    padding: 14px 24px 18px; border-top: 1px solid #121926;
+    background: #070a11;
+  }
+  button.action {
+    background: #1a2333; color: #dbe3f0; border: 1px solid #2a3550;
+    border-radius: 8px; padding: 8px 22px; font: inherit; cursor: pointer;
+  }
+  button.action:hover { background: #212c40; border-color: #6ea8ff; }
+  .message {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 48px 24px; color: #9aa7bd; text-align: center;
+  }
+  .message .spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 3px solid #1c2433; border-top-color: #6ea8ff;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .message.error { color: #ff9d9d; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Choose what to share</h1>
+  <p>SERA will see the surface you pick until you stop sharing.</p>
+</header>
+<main id="list"></main>
+<footer>
+  <button class="action" id="cancel" type="button">Cancel</button>
+</footer>
+<script>
+(function () {
+  'use strict';
+  var api = window.seraScreenPicker;
+  var list = document.getElementById('list');
+  var cancelBtn = document.getElementById('cancel');
+  var settled = false;
+  var lastSources = null;
+
+  function el(tag, className) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    return node;
+  }
+
+  function showMessage(text, isError, busy) {
+    list.textContent = '';
+    var box = el('div', 'message' + (isError ? ' error' : ''));
+    if (busy) box.appendChild(el('div', 'spinner'));
+    var text = (function (t) { var s = el('span'); s.textContent = t; return s; })(text);
+    box.appendChild(text);
+    list.appendChild(box);
+  }
+
+  function lockPicker() { settled = true; }
+
+  function card(item) {
+    var btn = el('button', 'card ' + item.kind);
+    btn.type = 'button';
+    btn.title = item.name;
+
+    var thumb = el('div', 'thumb');
+    if (item.thumbnail) {
+      var img = new Image();
+      img.alt = '';
+      img.src = item.thumbnail;
+      thumb.appendChild(img);
+    } else {
+      var none = el('span', 'nothumb');
+      none.textContent = 'No preview';
+      thumb.appendChild(none);
+    }
+
+    var label = el('div', 'label');
+    if (item.appIcon) {
+      var icon = new Image();
+      icon.alt = '';
+      icon.className = 'appicon';
+      icon.src = item.appIcon;
+      label.appendChild(icon);
+    }
+    var name = el('span', 'name');
+    name.textContent = item.name;
+    label.appendChild(name);
+
+    btn.appendChild(thumb);
+    btn.appendChild(label);
+    btn.addEventListener('click', function () {
+      if (settled) return;
+      lockPicker();
+      showMessage('Starting screen share…', false, true);
+      api.select(item.id).then(function (result) {
+        if (!result || !result.ok) {
+          settled = false;
+          // Failure is survivable (e.g. the pending request vanished):
+          // bring the list back so the user can retry or pick another
+          // surface instead of being stranded on an error message.
+          if (lastSources && lastSources.length) render(lastSources);
+          else showMessage('Could not start sharing. Please try again.', true);
+        }
+        // On success the main process closes this window.
+      }).catch(function () {
+        settled = false;
+        if (lastSources && lastSources.length) render(lastSources);
+        else showMessage('Could not start sharing. Please try again.', true);
+      });
+    });
+    return btn;
+  }
+
+  function section(title, items) {
+    var wrap = el('section');
+    var heading = el('h2');
+    heading.textContent = title + ' (' + items.length + ')';
+    wrap.appendChild(heading);
+    var grid = el('div', 'grid');
+    for (var i = 0; i < items.length; i += 1) grid.appendChild(card(items[i]));
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  function render(sources) {
+    list.textContent = '';
+    var screens = sources.filter(function (s) { return s.kind === 'screen'; });
+    var windows = sources.filter(function (s) { return s.kind !== 'screen'; });
+    if (screens.length) list.appendChild(section('Entire screen', screens));
+    if (windows.length) list.appendChild(section('Application window', windows));
+  }
+
+  function cancel() {
+    if (!api || settled) return;
+    lockPicker();
+    api.cancel().catch(function () { /* window closes regardless */ });
+  }
+
+  cancelBtn.addEventListener('click', cancel);
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') cancel();
+  });
+
+  if (!api) {
+    showMessage('This page must be opened by the SERA screen picker.', true);
+    return;
+  }
+
+  showMessage('Looking for screens and windows…', false, true);
+  api.getSources().then(function (sources) {
+    if (settled) return;
+    if (!Array.isArray(sources) || sources.length === 0) {
+      showMessage('No screens or windows are available to share.', true);
+      return;
+    }
+    lastSources = sources;
+    render(sources);
+  }).catch(function () {
+    if (!settled) showMessage('No screens or windows are available to share.', true);
+  });
+})();
+</script>
+</body>
+</html>

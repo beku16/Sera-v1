@@ -1,0 +1,91 @@
+# SERA — electron-builder configuration (v1.9.0, PHASE 4)
+#
+# Produces, for Windows:
+#   release/SERA Setup <version>.exe   — NSIS one-click installer
+#                                        (per-user, no admin, Start Menu +
+#                                        optional desktop shortcut, clean
+#                                        uninstall, updates preserve all
+#                                        user data because NOTHING user-
+#                                        written lives under resources/)
+#   release/SERA Portable <version>.exe — single-file portable build
+#
+# Runtime layout inside the package (matches SERAPaths expectations):
+#   SERA.exe, resources/app.asar          — Electron shell + renderer
+#   resources/dist/                       — vite frontend AND dist/server.cjs
+#   resources/scripts/setup-ocr.mjs       — OCR data self-heal target
+#   resources/icons/                      — runtime window/taskbar icons
+#   node_modules (prod subset, unpacked)  — server deps (--packages=external)
+#
+# Build:  npm run dist:win   (scripts/dist-win.mjs orchestrates everything)
+
+appId: com.beku16.sera
+productName: SERA
+copyright: MIT License
+
+directories:
+  output: release
+  buildResources: build
+
+# The Electron entry (package.json "main" points here too).
+files:
+  - electron/**/*
+  - package.json
+  - "!**/*.map"
+  - "!src/**"
+  - "!release/**"
+  - "!*.md"
+
+# Everything the bundled backend + frontend need at runtime. These land in
+# process.resourcesPath — exactly what SERAPaths.resourcesRoot() resolves to.
+extraResources:
+  - from: dist
+    to: dist
+    filter:
+      - "**/*"
+  - from: scripts/setup-ocr.mjs
+    to: scripts
+  - from: public/icons
+    to: icons
+
+asar: true
+
+# Native / binary modules must be UNPACKED from app.asar — a .node file
+# inside asar cannot be dlopen'ed, and tesseract.js spawns its worker from
+# disk. robotjs additionally needs an Electron-ABI rebuild on the builder
+# (scripts/dist-win.mjs runs @electron/rebuild; see audit BUG L12 — if the
+# rebuild fails on the build machine, SERA degrades gracefully to the koffi
+# SendInput fallback that already ships in WindowsProviders).
+asarUnpack:
+  - node_modules/robotjs/**
+  - node_modules/active-win/**
+  - node_modules/koffi/**
+  - node_modules/tesseract.js/**
+  - node_modules/playwright-core/**
+
+# Native dependency rebuild against Electron's ABI (NOT the Node ABI).
+npmRebuild: true
+buildDependenciesFromSource: false
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: false
+  createStartMenuShortcut: true
+  createDesktopShortcut: true
+  shortcutName: SERA
+  deleteAppDataOnUninstall: false
+  artifactName: SERA Setup ${version}.${ext}
+
+portable:
+  artifactName: SERA Portable ${version}.${ext}
