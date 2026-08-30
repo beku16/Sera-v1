@@ -30,19 +30,34 @@ const root = path.resolve(here, '..');
 
 const isWin = process.platform === 'win32';
 const npm = isWin ? 'npm.cmd' : 'npm';
+const npx = isWin ? 'npx.cmd' : 'npx';
+
+/**
+ * .cmd/.bat shims (npm.cmd, npx.cmd) MUST go through cmd.exe — Node's
+ * CVE-2024-27980 hardening throws EINVAL when they are spawned directly.
+ * Real executables (node.exe, python.exe) must NOT go through a shell:
+ * cmd.exe splits unquoted paths at the first space, so
+ * "C:\Program Files\nodejs\node.exe" becomes 'C:\Program' — the exact
+ * crash "[dist-win] FAILED at: version" on Windows. spawn() WITHOUT a
+ * shell quotes the executable path itself and is space-safe.
+ */
+function shellFor(command) {
+  return isWin && /\.(cmd|bat)$/i.test(command);
+}
 
 function run(label, command, args, opts = {}) {
   console.log(`\n[dist-win] ── ${label} ── ${command} ${args.join(' ')}`);
   const result = spawnSync(command, args, {
     cwd: root,
     stdio: 'inherit',
-    shell: isWin,
+    shell: shellFor(command),
     ...opts,
   });
   if (result.status !== 0) {
     console.error(`[dist-win] FAILED at: ${label} (exit ${result.status})`);
     process.exit(result.status ?? 1);
   }
+  return result;
 }
 
 // 1) Version single-sourcing.
@@ -62,9 +77,10 @@ if (existsSync(path.join(root, 'build', 'icon.ico'))) {
   const pythonCandidates = isWin ? ['python', 'py -3', 'python3'] : ['python3', 'python'];
   let generated = false;
   for (const candidate of pythonCandidates) {
-    const cmd = candidate.split(' ')[0];
-    const rest = candidate.split(' ').slice(1);
-    const result = spawnSync(cmd, [...rest, 'build/icon-builder.py'], { cwd: root, stdio: 'inherit', shell: isWin });
+    const [cmd, ...rest] = candidate.split(' ');
+    // python/py are real executables — shellFor() keeps them shell-free
+    // (space-safe even when Python lives under "C:\Program Files\...").
+    const result = spawnSync(cmd, [...rest, 'build/icon-builder.py'], { cwd: root, stdio: 'inherit', shell: shellFor(cmd) });
     if (result.status === 0 && existsSync(path.join(root, 'build', 'icon.ico'))) {
       generated = true;
       break;
@@ -82,23 +98,28 @@ if (existsSync(path.join(root, 'build', 'icon.ico'))) {
 // 3) Frontend + backend build (also regenerates the version module).
 run('build', npm, ['run', 'build']);
 
-// 4) Electron-ABI native rebuild. robotjs is the known-hard one (audit BUG
-//    L12: Node-24 build fails; Electron 43 ABI needs VS Build Tools on the
-//    builder). If this step fails, STOP: shipping an unbuilt native module
-//    would only fail at runtime on the user machine.
-try {
-  const rebuildArgs = ['@electron/rebuild', '-f', '-w', 'robotjs,active-win,koffi', '-o', 'robotjs,active-win,koffi'];
-  run('electron-abi rebuild', isWin ? 'npx.cmd' : 'npx', rebuildArgs);
-} catch {
-  console.error(
-    '[dist-win] Native rebuild failed.\n' +
-    '  Ensure Windows + Visual Studio Build Tools + Python are installed (see README → Development).\n' +
-    '  SERA degrades to input fallbacks without robotjs, but the build must not ship silently broken.',
+// 4) Electron-ABI native rebuild — split by criticality (audit BUG L12):
+//    REQUIRED  active-win (window enumeration) + koffi (SendInput input
+//              fallback) — the packaged app cannot work without them;
+//              a failed rebuild here is FATAL, stop the build.
+//    OPTIONAL  robotjs — WindowsProviders lazy-requires it inside a
+//              try/catch (src/actions/WindowsProviders.ts) and degrades
+//              to koffi SendInput, so a robotjs compile failure (the
+//              known-hard one: old node-gyp project, needs the VS C++
+//              workload) downgrades to a LOUD warning and the build
+//              continues. Typing/mouse control still works via koffi.
+run('electron-abi rebuild (required)', npx, ['@electron/rebuild', '-f', '-w', 'active-win,koffi', '-o', 'active-win,koffi']);
+const robotjsResult = spawnSync(npx, ['@electron/rebuild', '-f', '-w', 'robotjs', '-o', 'robotjs'], { cwd: root, stdio: 'inherit', shell: shellFor(npx) });
+if (robotjsResult.status !== 0) {
+  console.warn(
+    '[dist-win] robotjs Electron-ABI rebuild FAILED (exit ' + robotjsResult.status + ') — continuing WITHOUT robotjs.\n' +
+    '  SERA degrades to the koffi SendInput fallback (src/actions/WindowsProviders.ts), so typing/mouse\n' +
+    '  control still works. To enable robotjs later: install Visual Studio Build Tools with the\n' +
+    '  "Desktop development with C++" workload + Python 3, then rerun: npm run dist:win',
   );
-  process.exit(1);
 }
 
 // 5) electron-builder: NSIS + portable.
-run('electron-builder', isWin ? 'npx.cmd' : 'npx', ['electron-builder', '--win', '--config', 'electron-builder.yml']);
+run('electron-builder', npx, ['electron-builder', '--win', '--config', 'electron-builder.yml']);
 
 console.log('\n[dist-win] Done. Artifacts in release/ — smoke-test them per docs/PACKAGED-SMOKE-TEST.md before publishing.');

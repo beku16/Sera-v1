@@ -19,12 +19,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/beku16/sera.git"
+    "url": "git+https://github.com/beku16/Sera-v1.git"
   },
   "bugs": {
-    "url": "https://github.com/beku16/sera/issues"
+    "url": "https://github.com/beku16/Sera-v1/issues"
   },
-  "homepage": "https://github.com/beku16/sera#readme",
+  "homepage": "https://github.com/beku16/Sera-v1#readme",
   "engines": {
     "node": ">=22"
   },
