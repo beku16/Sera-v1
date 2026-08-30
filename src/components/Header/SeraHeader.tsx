@@ -1,7 +1,9 @@
 import React from 'react';
-import { Settings, MessageSquare, Activity, Sun, Moon, Zap, Cloud, Power } from 'lucide-react';
+import { Settings, MessageSquare, Activity, Sun, Moon, Zap, Cloud, Power, Radio } from 'lucide-react';
 import { AssistantStateType, ColorPaletteId } from '../../types';
 import { getPaletteConfig } from '../../config/palettes';
+
+import { ModeSwitchState } from '../MicrophoneButton/MicControl';
 
 interface SeraHeaderProps {
   state: AssistantStateType;
@@ -13,6 +15,8 @@ interface SeraHeaderProps {
   runMode?: 'online' | 'local';
   /** 1-click Local ⇄ Online switcher (spec A.2). */
   onToggleRunMode?: () => void;
+  /** Active mode transition timer and progress */
+  modeSwitchState?: ModeSwitchState | null;
   onOpenSettings: () => void;
   onOpenDiagnostics: () => void;
   onOpenTranscripts: () => void;
@@ -27,6 +31,7 @@ export const SeraHeader: React.FC<SeraHeaderProps> = React.memo(({
   onToggleTheme,
   runMode = 'online',
   onToggleRunMode,
+  modeSwitchState,
   onOpenSettings,
   onOpenDiagnostics,
   onOpenTranscripts,
@@ -110,24 +115,49 @@ export const SeraHeader: React.FC<SeraHeaderProps> = React.memo(({
             <button
               type="button"
               onClick={onToggleRunMode}
+              disabled={Boolean(modeSwitchState)}
               aria-label={`Switch to ${runMode === 'local' ? 'online' : 'local'} mode`}
-              className="group relative inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 backdrop-blur-md transition-all duration-200 active:scale-95"
+              className="group relative inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 backdrop-blur-md transition-all duration-200 active:scale-95 disabled:opacity-80"
               style={{
-                borderColor: runMode === 'local' ? 'rgba(52, 211, 153, 0.35)' : 'rgba(34, 211, 238, 0.35)',
-                background: runMode === 'local' ? 'rgba(52, 211, 153, 0.08)' : 'rgba(34, 211, 238, 0.08)',
+                borderColor: modeSwitchState
+                  ? 'rgba(56, 189, 248, 0.6)'
+                  : runMode === 'local'
+                  ? 'rgba(52, 211, 153, 0.35)'
+                  : 'rgba(34, 211, 238, 0.35)',
+                background: modeSwitchState
+                  ? 'rgba(56, 189, 248, 0.15)'
+                  : runMode === 'local'
+                  ? 'rgba(52, 211, 153, 0.08)'
+                  : 'rgba(34, 211, 238, 0.08)',
               }}
-              title={runMode === 'local' ? 'Local Mode (100% offline) — click to switch to Online' : 'Online Mode (Gemini Live) — click to switch to Local'}
+              title={
+                modeSwitchState
+                  ? `Switching to ${modeSwitchState.targetMode}...`
+                  : runMode === 'local'
+                  ? 'Local Mode (100% offline) — click to switch to Online'
+                  : 'Online Mode (Gemini Live) — click to switch to Local'
+              }
             >
-              {runMode === 'local' ? (
+              {modeSwitchState ? (
+                <Radio className="h-3.5 w-3.5 animate-spin text-cyan-300" />
+              ) : runMode === 'local' ? (
                 <Zap className="h-3.5 w-3.5 text-emerald-300" />
               ) : (
                 <Cloud className="h-3.5 w-3.5 text-cyan-300" />
               )}
               <span
                 className="font-mono text-[9px] font-bold tracking-[0.16em] uppercase"
-                style={{ color: runMode === 'local' ? 'rgb(167, 243, 208)' : 'rgb(165, 243, 252)' }}
+                style={{
+                  color: modeSwitchState
+                    ? 'rgb(125, 211, 252)'
+                    : runMode === 'local'
+                    ? 'rgb(167, 243, 208)'
+                    : 'rgb(165, 243, 252)',
+                }}
               >
-                {runMode}
+                {modeSwitchState
+                  ? `${modeSwitchState.targetMode} (${modeSwitchState.remainingSeconds.toFixed(1)}s)`
+                  : runMode}
               </span>
             </button>
           )}

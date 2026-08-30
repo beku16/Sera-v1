@@ -81,6 +81,8 @@ interface MyPcTabProps {
   onUpdateSettings: (partial: Partial<AssistantSettings>) => void;
   /** v1.8.4: reopens the startup wizard (offline/online mode choice + guided local setup). */
   onOpenSetupWizard?: () => void;
+  /** Opens the secure uninstallation wizard modal */
+  onOpenUninstall?: () => void;
 }
 
 const IDLE_PULL_STATE: VerifiedPullState = IDLE_VERIFIED_PULL;
@@ -121,7 +123,7 @@ function isModelInstalledLocal(model: string, installed: Array<{ name: string }>
   });
 }
 
-export const MyPcTab: React.FC<MyPcTabProps> = ({ settings, onUpdateSettings, onOpenSetupWizard }) => {
+export const MyPcTab: React.FC<MyPcTabProps> = ({ settings, onUpdateSettings, onOpenSetupWizard, onOpenUninstall }) => {
   const [status, setStatus] = useState<LocalStatus | null>(null);
   const [auditing, setAuditing] = useState(true);
   const [pull, setPull] = useState(IDLE_PULL_STATE);
@@ -581,6 +583,23 @@ export const MyPcTab: React.FC<MyPcTabProps> = ({ settings, onUpdateSettings, on
                 className="shrink-0 rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[9px] font-bold text-graphite transition hover:text-ink"
               >
                 OPEN LOG FOLDER
+              </button>
+            </div>
+
+            {/* ── UNINSTALL & DATA MANAGEMENT DANGER ZONE ── */}
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-red-500/30 bg-red-500/[0.04] p-3">
+              <div className="min-w-0">
+                <span className="block font-sans text-xs font-bold text-red-300">Uninstall SERA & Data Management</span>
+                <span className="block font-mono text-[9px] leading-relaxed text-graphite">
+                  Launch the secure uninstallation wizard with options to preserve your memories for future reinstall or perform a 100% clean wipe.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenUninstall}
+                className="shrink-0 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 font-mono text-[9px] font-bold text-red-300 transition hover:bg-red-500/20 active:scale-95"
+              >
+                UNINSTALL SERA
               </button>
             </div>
           </>

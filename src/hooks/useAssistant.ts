@@ -3,7 +3,7 @@ import { APP_CONFIG } from '../config/config';
 import { LiveSession } from '../gemini/LiveSession';
 import { LocalSession } from '../local/LocalSession';
 import { AssistantStateManager } from '../state/AssistantState';
-import { matchSleepIntent, SLEEP_FAREWELL } from '../utils/sleepCommands';
+import { matchSleepIntent, SLEEP_FAREWELL, matchUninstallIntent, UNINSTALL_FAREWELL } from '../utils/sleepCommands';
 import { useScreenShare, UseScreenShareResult } from './useScreenShare';
 import {
   AssistantSettings,
@@ -111,6 +111,7 @@ export function useAssistant() {
   const [sleepMode, setSleepMode] = useState<boolean>(seraFullyAsleep);
   /** v1.6.10: server-confirmed live screen share — drives the LIVE badge. */
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
+  const [isUninstallRequested, setIsUninstallRequested] = useState<boolean>(false);
 
   /** Resume handle from the last Gemini session — lets a reconnect RESUME
    *  the conversation (context preserved) instead of starting a fresh one
@@ -509,6 +510,21 @@ export function useAssistant() {
         // intercepted here so they can never become chat output or another
         // model turn.
         if (item.sender === 'user' && item.isPartial !== true) {
+          if (matchUninstallIntent(item.text)) {
+            console.log('[SERA] ⚠️ Uninstall command detected — opening security confirmation');
+            setIsUninstallRequested(true);
+            setTranscripts((prev) => [
+              ...prev,
+              item,
+              {
+                id: `uninstall-farewell-${Date.now()}`,
+                sender: 'assistant',
+                text: UNINSTALL_FAREWELL,
+                timestamp: Date.now(),
+              },
+            ]);
+            return;
+          }
           const intent = matchSleepIntent(item.text);
           if (intent === 'sleep') {
             console.log('[SERA] 😴 Sleep command detected — going fully quiet');
@@ -700,6 +716,16 @@ export function useAssistant() {
   // Typing to her ALWAYS ends full sleep — that is the "when I need you I will ask" path.
   const sendTextOrWake = useCallback((text: string) => {
     wakeFromSleep();
+    if (matchUninstallIntent(text)) {
+      console.log('[SERA] ⚠️ Uninstall command in text input — opening security confirmation');
+      setIsUninstallRequested(true);
+      setTranscripts((prev) => [
+        ...prev,
+        { id: `user-text-${Date.now()}`, sender: 'user', text, timestamp: Date.now() },
+        { id: `uninstall-farewell-${Date.now()}`, sender: 'assistant', text: UNINSTALL_FAREWELL, timestamp: Date.now() },
+      ]);
+      return;
+    }
     // v1.7.0: sharing with continuous Screen Vision OFF? Attach ONE fresh
     // frame right before the question — the frame rides the live socket
     // (ordered before the text) or buffers for the session-ready injection,
@@ -750,6 +776,8 @@ export function useAssistant() {
     sleepMode,
     enterSleepMode,
     wakeFromSleep,
+    isUninstallRequested,
+    setIsUninstallRequested,
   };
 }
 

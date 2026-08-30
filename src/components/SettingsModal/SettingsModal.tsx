@@ -41,6 +41,8 @@ interface SettingsModalProps {
   initialTab?: 'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models';
   /** v1.8.4: reopens the startup wizard (mode selection + setup instructions). */
   onOpenSetupWizard?: () => void;
+  /** Opens the secure uninstallation modal */
+  onOpenUninstall?: () => void;
 }
 
 interface MediaDeviceInfoItem {
@@ -88,6 +90,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateSettings,
   initialTab = 'atmosphere',
   onOpenSetupWizard,
+  onOpenUninstall,
 }) => {
   const [activeTab, setActiveTab] = useState<'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models'>(initialTab);
   const [copied, setCopied] = useState(false);
@@ -1233,7 +1236,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
           ) : activeTab === 'mypc' ? (
-            <MyPcTab settings={settings} onUpdateSettings={onUpdateSettings} onOpenSetupWizard={onOpenSetupWizard} />
+            <MyPcTab settings={settings} onUpdateSettings={onUpdateSettings} onOpenSetupWizard={onOpenSetupWizard} onOpenUninstall={onOpenUninstall} />
 
           ) : activeTab === 'memory' ? (
             <MemorySettingsTab />

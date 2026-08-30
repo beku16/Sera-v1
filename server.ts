@@ -23,6 +23,7 @@ import { OllamaClient, PullProgressEvent } from './src/local/OllamaClient';
 import { LocalAgentEngine } from './src/local/LocalAgentEngine';
 import { LocalWhisperStt, LocalPiperTts } from './src/local/LocalSpeechEngines';
 import { defaultApiKeyVault, ApiProvider, API_PROVIDERS } from './src/local/ApiKeyVault';
+import { defaultUninstallService } from './src/local/UninstallService';
 import { installProxySupport, auditHostResolution, logHostResolutionAudit } from './src/local/proxySupport';
 import { verdictForPull } from './src/local/diskSpace';
 import { defaultOllamaManager } from './src/local/ollamaManager';
@@ -370,6 +371,72 @@ app.post('/api/diagnostics/simulate-issue', heavyApiLimiter, async (_req, res) =
     res.json({ success: true, message: 'Simulated issue injected. Diagnostic engine detected test artifact.', report });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// ─── Uninstallation & Self-Uninstall Endpoints ──────────────────────────────
+app.get('/api/uninstall/summary', (_req, res) => {
+  try {
+    const summary = defaultUninstallService.getMemorySummary();
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get('/api/uninstall/challenge', (_req, res) => {
+  try {
+    const challenge = defaultUninstallService.generateChallenge();
+    res.json(challenge);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/uninstall/verify', (req, res) => {
+  try {
+    const { challengeId, inputPhrase } = req.body || {};
+    if (!challengeId || !inputPhrase) {
+      res.status(400).json({ valid: false, reason: 'challengeId and inputPhrase are required' });
+      return;
+    }
+    const result = defaultUninstallService.verifyChallenge(challengeId, inputPhrase);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ valid: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/uninstall/backup', (req, res) => {
+  try {
+    const { customTargetDir } = req.body || {};
+    const result = defaultUninstallService.exportMemoryBackup(customTargetDir);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/api/uninstall/execute', heavyApiLimiter, async (req, res) => {
+  try {
+    const { challengeId, inputPhrase, preserveMemory, preserveEngines } = req.body || {};
+    if (!challengeId || !inputPhrase) {
+      res.status(400).json({ success: false, message: 'Authentication challenge confirmation is required' });
+      return;
+    }
+    const verification = defaultUninstallService.verifyChallenge(challengeId, inputPhrase);
+    if (!verification.valid) {
+      res.status(403).json({ success: false, message: verification.reason || 'Authentication verification failed' });
+      return;
+    }
+
+    const result = await defaultUninstallService.executeUninstall({
+      preserveMemory: preserveMemory !== false,
+      preserveEngines: preserveEngines === true,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 

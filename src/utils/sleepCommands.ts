@@ -149,3 +149,45 @@ export function matchSleepIntent(text: string): SleepIntent | null {
 
 /** Short farewell SERA speaks (locally, never via the LLM) before sleeping. */
 export const SLEEP_FAREWELL = 'Okay, going fully quiet. Click me or type whenever you need me.';
+
+/** Phrases that trigger the secure uninstallation flow. */
+const UNINSTALL_SUBSTRINGS: string[] = [
+  'uninstall yourself',
+  'uninstall sera',
+  'uninstall sara',
+  'delete yourself',
+  'delete sera',
+  'delete sara',
+  'remove yourself',
+  'remove sera',
+  'remove sara',
+  'erase sera',
+  'wipe sera',
+  'uninstall app',
+  'uninstall the app',
+];
+
+const UNINSTALL_EXACT: ReadonlySet<string> = new Set([
+  'uninstall',
+  'uninstall sera',
+  'uninstall yourself',
+  'delete sera',
+  'remove sera',
+  'self destruct',
+]);
+
+/**
+ * Checks if the user explicitly commanded SERA to uninstall herself.
+ */
+export function matchUninstallIntent(text: string): boolean {
+  const normalized = normalizeSleepText(text);
+  if (!normalized) return false;
+  if (UNINSTALL_EXACT.has(normalized)) return true;
+  for (const phrase of UNINSTALL_SUBSTRINGS) {
+    if (normalized.includes(phrase)) return true;
+  }
+  return false;
+}
+
+export const UNINSTALL_FAREWELL = 'I have opened the uninstallation security gate on your screen. To prevent accidental triggers, please say or type the confirmation code to proceed.';
+

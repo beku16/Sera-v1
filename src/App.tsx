@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useMemo, useEffect, useRef, Suspense, lazy } from 'react';
 import { useAssistant } from './hooks/useAssistant';
 import { useWakeWord } from './hooks/useWakeWord';
 // Lazy-load SeraOrb — it's the only consumer of `three` (~600kB), and we
@@ -18,6 +18,8 @@ import { ScreenShareDock } from './components/ScreenShare/ScreenShareDock';
 import { getPaletteConfig } from './config/palettes';
 import { DiagnosticsModal } from './components/DiagnosticsModal/DiagnosticsModal';
 import { StartupLauncherModal } from './components/StartupLauncherModal/StartupLauncherModal';
+import { UninstallModal } from './components/UninstallModal/UninstallModal';
+import { ModeSwitchState } from './components/MicrophoneButton/MicControl';
 import type { AssistantSettings } from './types';
 // Build-time constant from package.json — used to re-show the startup wizard
 // once per app version (localStorage survives reinstalls, so the old
@@ -47,6 +49,8 @@ export default function App() {
     isConnected,
     diagnostics,
     sleepMode,
+    isUninstallRequested,
+    setIsUninstallRequested,
   } = useAssistant();
 
   // Hands-free "Hey Sera" or "Sera" continuous wake word listener.
@@ -100,17 +104,56 @@ export default function App() {
     updateSettings({ ...partial, startupCompletedVersion: APP_VERSION });
   };
 
+  // ── Mode Switch Loading Timer State ──
+  const [modeSwitchState, setModeSwitchState] = useState<ModeSwitchState | null>(null);
+  const switchTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const runMode = settings.runMode === 'local' ? 'local' : 'online';
   const handleToggleRunMode = () => {
+    if (modeSwitchState) return;
     const next = runMode === 'local' ? 'online' : 'local';
-    updateSettings({ runMode: next });
-    // Mirror the switch to the server so its in-memory mode (health
-    // endpoint, diagnostics) reflects what the user actually picked.
-    void fetch('/api/mode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: next }),
-    }).catch(() => undefined);
+    const totalDuration = next === 'online' ? 2.2 : 1.8;
+    const label = next === 'online' ? 'CONNECTING TO GEMINI...' : 'INITIALIZING OLLAMA ENGINE...';
+
+    const startTime = Date.now();
+    const durationMs = totalDuration * 1000;
+
+    setModeSwitchState({
+      targetMode: next,
+      totalSeconds: totalDuration,
+      remainingSeconds: totalDuration,
+      progress: 0,
+      label,
+    });
+
+    if (switchTimerRef.current) clearInterval(switchTimerRef.current);
+
+    switchTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const remainingMs = Math.max(0, durationMs - elapsed);
+      const remainingSec = remainingMs / 1000;
+      const progress = Math.min(100, Math.round((elapsed / durationMs) * 100));
+
+      if (remainingMs <= 0) {
+        if (switchTimerRef.current) clearInterval(switchTimerRef.current);
+        switchTimerRef.current = null;
+        updateSettings({ runMode: next });
+        setModeSwitchState(null);
+        void fetch('/api/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: next }),
+        }).catch(() => undefined);
+      } else {
+        setModeSwitchState({
+          targetMode: next,
+          totalSeconds: totalDuration,
+          remainingSeconds: remainingSec,
+          progress,
+          label,
+        });
+      }
+    }, 100);
   };
   const reopenLauncher = () => {
     // Relaunch the wizard but keep previous choices as defaults.
@@ -123,6 +166,14 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'atmosphere' | 'audio' | 'voice' | 'mypc' | 'memory' | 'speakers' | 'keys' | 'models'>('atmosphere');
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [isUninstallOpen, setIsUninstallOpen] = useState(false);
+
+  // Synchronize voice-command or text-command triggered uninstallation intent
+  useEffect(() => {
+    if (isUninstallRequested) {
+      setIsUninstallOpen(true);
+    }
+  }, [isUninstallRequested]);
 
   // v1.8.4: reachable entry point — the settings modal's MY PC tab offers
   // "Reopen setup wizard" (mode selection + Ollama instructions). Previously
@@ -296,6 +347,7 @@ export default function App() {
         onToggleTheme={handleToggleTheme}
         runMode={runMode}
         onToggleRunMode={handleToggleRunMode}
+        modeSwitchState={modeSwitchState}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
         onOpenTranscripts={openFullHistory}
@@ -345,6 +397,7 @@ export default function App() {
           speechStatus={speechStatus}
           speechError={speechError}
           sleepMode={sleepMode}
+          modeSwitchState={modeSwitchState}
           onRequestPermission={requestPermission}
           onOpenDesktop={openDesktopMode}
           onOpenVoiceSettings={openVoiceSettings}
@@ -385,6 +438,21 @@ export default function App() {
         onUpdateSettings={updateSettings}
         initialTab={settingsTab}
         onOpenSetupWizard={openSetupWizardFromSettings}
+        onOpenUninstall={() => {
+          setIsSettingsOpen(false);
+          setIsUninstallOpen(true);
+        }}
+      />
+
+      {/* Secure Uninstallation & Data Protection Modal */}
+      <UninstallModal
+        isOpen={isUninstallOpen}
+        onClose={() => {
+          setIsUninstallOpen(false);
+          setIsUninstallRequested(false);
+        }}
+        paletteId={settings.palette}
+        customColor={settings.customColor}
       />
 
       {/* Startup Launcher Wizard — dual-mode launch (spec A) */}

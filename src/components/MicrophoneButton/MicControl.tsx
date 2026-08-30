@@ -3,6 +3,14 @@ import { Sparkles, Radio, PhoneOff, PhoneCall, Mic, Zap, Volume2, Activity, Moon
 import { AssistantStateType, AudioVisualizerData, ColorPaletteId } from '../../types';
 import { getPaletteConfig } from '../../config/palettes';
 
+export interface ModeSwitchState {
+  targetMode: 'local' | 'online';
+  remainingSeconds: number;
+  totalSeconds: number;
+  progress: number;
+  label: string;
+}
+
 interface VoiceDeckProps {
   state: AssistantStateType;
   visualizerData?: AudioVisualizerData;
@@ -15,6 +23,8 @@ interface VoiceDeckProps {
   speechError?: string | null;
   /** True when SERA is in FULL SLEEP after a "full quit" style command. */
   sleepMode?: boolean;
+  /** Active mode transition timer and progress */
+  modeSwitchState?: ModeSwitchState | null;
   onRequestPermission?: () => void;
   onOpenDesktop?: () => void;
   onOpenVoiceSettings?: () => void;
@@ -34,6 +44,7 @@ export const MicControl: React.FC<VoiceDeckProps> = React.memo(({
   customColor,
   speechStatus,
   sleepMode,
+  modeSwitchState,
   onInterrupt,
   onOpenVoiceSettings,
   onToggleTalk,
@@ -44,7 +55,21 @@ export const MicControl: React.FC<VoiceDeckProps> = React.memo(({
   const isConnecting = state === 'connecting' || state === 'wake_word_detected';
   const isWakeWord = state === 'wake_word_detected';
   const isError = state === 'error';
-  const isWakeActive = speechStatus === 'STARTED' || speechStatus === 'READY' || speechStatus === 'IDLE' || speechStatus === 'STARTING';
+  const rawWakeActive = speechStatus === 'STARTED' || speechStatus === 'READY' || speechStatus === 'IDLE' || speechStatus === 'STARTING';
+  const [isWakeActive, setIsWakeActive] = useState(rawWakeActive);
+
+  // Debounce wake status to eliminate rapid "READY" <-> "ALWAYS READY" jitter during recognition recycling
+  useEffect(() => {
+    if (rawWakeActive) {
+      setIsWakeActive(true);
+    } else {
+      const timer = setTimeout(() => {
+        setIsWakeActive(false);
+      }, 1200);
+      return () => clearTimeout(timer);
+    }
+  }, [rawWakeActive]);
+
   const palette = getPaletteConfig(paletteId, customColor);
 
   // Active session stopwatch
@@ -181,7 +206,9 @@ export const MicControl: React.FC<VoiceDeckProps> = React.memo(({
         >
           {/* Status Indicator & Prompt Tip */}
           <div className="flex items-center gap-2.5">
-            {sleepMode ? (
+            {modeSwitchState ? (
+              <Radio className="h-3.5 w-3.5 animate-spin text-cyan-300" />
+            ) : sleepMode ? (
               <Moon className="h-3.5 w-3.5 text-indigo-300" />
             ) : (
               <span className="relative flex h-2.5 w-2.5">
@@ -206,7 +233,9 @@ export const MicControl: React.FC<VoiceDeckProps> = React.memo(({
             )}
 
             <span className="font-mono text-[10px] font-black tracking-[0.18em] text-white/90 uppercase">
-              {sleepMode
+              {modeSwitchState
+                ? `SWITCHING TO ${modeSwitchState.targetMode} (${modeSwitchState.remainingSeconds.toFixed(1)}s)`
+                : sleepMode
                 ? 'SLEEPING'
                 : isError
                 ? 'OFFLINE'
@@ -218,7 +247,9 @@ export const MicControl: React.FC<VoiceDeckProps> = React.memo(({
             </span>
 
             <span className="rounded-md border border-white/10 bg-white/[0.05] px-2 py-0.5 font-mono text-[9px] font-bold text-white/60 tracking-wider">
-              {sleepMode ? (
+              {modeSwitchState ? (
+                <span className="text-cyan-300 font-extrabold">{modeSwitchState.label}</span>
+              ) : sleepMode ? (
                 <>FULLY QUIET — NO INTERRUPTIONS</>
               ) : (
                 <>SAY <strong className="text-white font-extrabold">"HEY SERA"</strong></>
