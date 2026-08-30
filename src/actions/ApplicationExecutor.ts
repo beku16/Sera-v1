@@ -4,6 +4,7 @@ import { ACTION_ERROR_CODES, ActionError } from './errors';
 import { Action, ActionExecutionContext, ActionExecutionResult, ActionExecutor, VerificationResult } from './types';
 import { resolveApplication } from '../authorization/ApplicationResolver';
 import type { WindowControlProvider, WindowInfo } from './WindowExecutor';
+import { esmImport } from '../diagnostics/esmShim';
 
 const execFileAsync = promisify(execFile);
 
@@ -263,7 +264,7 @@ async function waitForNativeWindow(application: ApplicationDefinition, pid?: num
   // behaviour of swallowing the spawn ENOENT as "APPLICATION_NOT_FOUND".
   let activeWin: typeof import('active-win');
   try {
-    const mod = await import('active-win');
+    const mod = (await esmImport('active-win')) as { default?: typeof import('active-win') };
     activeWin = mod.default ?? (mod as unknown as typeof import('active-win'));
   } catch {
     return undefined;
@@ -351,7 +352,7 @@ export class ApplicationExecutor implements ActionExecutor {
       let processId = parameters.processId;
       if (processId === undefined && parameters.application) {
         try {
-          const mod = await import('active-win');
+          const mod = (await esmImport('active-win')) as { default?: typeof import('active-win') };
           const activeWin = mod.default ?? (mod as unknown as typeof import('active-win'));
           const target = activeWin.getOpenWindowsSync().find((windowInfo) => windowInfo.owner.name.toLowerCase().includes(parameters.application!.toLowerCase()) || windowInfo.title.toLowerCase().includes(parameters.application!.toLowerCase()));
           processId = target?.owner.processId;

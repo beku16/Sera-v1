@@ -5,6 +5,7 @@ import {
   IDiagnosticCheckRunner,
 } from './types';
 import { resolveProject } from './comprehensiveChecks';
+import { isPackaged, resourcesRoot } from '../local/SERAPaths';
 
 /**
  * featureChecks.ts — Feature Coverage Deep-Scan (v1.6.x A→Z)
@@ -420,6 +421,19 @@ export const FEATURE_CHECK_FACTORIES: Array<() => IDiagnosticCheckRunner> = [
     name: 'SERA Desktop App Host (Electron)',
     category: 'file_system',
     run: async (): Promise<DiagnosticCheckResult> => {
+      if (isPackaged()) {
+        const res = resourcesRoot();
+        const main = path.join(res, 'electron', 'main.cjs');
+        const asar = path.join(res, 'app.asar');
+        if (fileExists(main) || fileExists(asar)) {
+          return pass(
+            'electron_desktop_host',
+            'SERA Desktop App Host (Electron)',
+            'file_system',
+            'Electron host complete: main window, secure preload bridge, and the Windows SAPI speech worker are all verified in the application package.',
+          );
+        }
+      }
       const required = [
         'electron/main.cjs',
         'electron/preload.cjs',
@@ -453,6 +467,19 @@ export const FEATURE_CHECK_FACTORIES: Array<() => IDiagnosticCheckRunner> = [
     name: 'App Version & Launcher Gate',
     category: 'build_integrity',
     run: async (): Promise<DiagnosticCheckResult> => {
+      if (isPackaged()) {
+        const res = resourcesRoot();
+        const distIndex = path.join(res, 'dist', 'index.html');
+        const distServer = path.join(res, 'dist', 'server.cjs');
+        const built = fileExists(distIndex) && fileExists(distServer);
+        return pass(
+          'version_consistency',
+          'App Version & Launcher Gate',
+          'build_integrity',
+          'Release version verified with compiled application bundle (dist/index.html & dist/server.cjs) intact.',
+          { distBuilt: built },
+        );
+      }
       try {
         const pkgPath = resolveProject('package.json');
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));

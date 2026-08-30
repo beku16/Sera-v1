@@ -43,6 +43,10 @@ extraResources:
     to: dist
     filter:
       - "**/*"
+  - from: electron
+    to: electron
+    filter:
+      - "**/*"
   - from: scripts/setup-ocr.mjs
     to: scripts/setup-ocr.mjs
   - from: public/icons

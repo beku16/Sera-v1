@@ -1,32 +1,9 @@
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import { ACTION_ERROR_CODES, ActionError } from './errors';
 import { Action, ActionExecutionContext, ActionExecutionResult, ActionExecutor, VerificationResult } from './types';
 import { getDisplayBounds } from './WindowsProviders';
+import { esmRequire, esmImport } from '../diagnostics/esmShim';
 
-// Resolve `require` relative to this module (not `process.cwd()`) so the
-// Windows native modules are loadable no matter where the server is launched
-// from. The previous `process.cwd()`-based base broke when launching the
-// server from a directory other than the project root.
-//
-// In a CJS bundle (esbuild output), `__filename` is defined natively. In
-// raw ESM (e.g. when run directly via `tsx` for dev), `__filename` is not
-// defined; we fall back to `import.meta.url` and convert to a file path.
-// The dynamic-require call inside `loadUser32`/`loadThreadFocus` is also
-// gated on `process.platform === 'win32'`, so non-Windows hosts never
-// actually invoke the resulting `require`.
-//
-// `import.meta` is detected statically by esbuild and elided when bundling
-// to CJS (the `__filename` branch is the one that's actually taken at
-// runtime in that case). To avoid esbuild's `empty-import-meta` warning,
-// the URL import is suppressed with a `void` expression that the bundler
-// can statically determine is unreachable when `__filename` is defined.
-declare const __filename: string | undefined;
-const moduleBasePath: string =
-  typeof __filename !== 'undefined' && __filename
-    ? __filename
-    : fileURLToPath(import.meta.url);
-const require = createRequire(moduleBasePath);
+const require = esmRequire;
 
 const IS_WINDOWS = process.platform === 'win32';
 type NativeWindow = {
@@ -170,18 +147,15 @@ export class WindowsWindowProvider implements WindowControlProvider {
   }
 
   public async getActive(): Promise<WindowInfo | undefined> {
-    const activeWin = (await import('active-win')).default;
+    const mod = (await esmImport('active-win')) as { default?: ActiveWinApi } & ActiveWinApi;
+    const activeWin = mod?.default ?? mod;
     const active = typeof activeWin?.sync === 'function' ? activeWin.sync() : undefined;
     return active ? toWindowInfo(active) : undefined;
   }
 
   public async list(): Promise<WindowInfo[]> {
-    // active-win's getOpenWindowsSync returns undefined when the native
-    // binding is unavailable (missing libx11 on Linux, degraded desktop
-    // sessions, sandboxed shells) — it must not crash the AGI perception
-    // loop with "Cannot read properties of undefined (reading 'map')".
-    // An empty list is the honest answer when no windows can be listed.
-    const activeWin = (await import('active-win')).default;
+    const mod = (await esmImport('active-win')) as { default?: { getOpenWindowsSync?: () => NativeWindow[] }; getOpenWindowsSync?: () => NativeWindow[] };
+    const activeWin = mod?.default ?? mod;
     const windows = typeof activeWin?.getOpenWindowsSync === 'function' ? activeWin.getOpenWindowsSync() : undefined;
     if (!Array.isArray(windows)) return [];
     return windows.map(toWindowInfo).filter((windowInfo) => windowInfo.title.trim().length > 0);

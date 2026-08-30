@@ -37,18 +37,15 @@
 
 import { createRequire as nodeCreateRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
-import { backendBundlePath } from '../local/SERAPaths';
+import path, { dirname } from 'node:path';
+import fs from 'node:fs';
+import { backendBundlePath, resourcesRoot, isPackaged } from '../local/SERAPaths';
 
 /**
  * The URL of this module file. Used as the resolution base for the
  * shimmed `require` so that bare module specifiers (e.g. 'robotjs')
  * resolve relative to the project's node_modules — same as they would
  * in the original CommonJS layout.
- *
- * `import.meta.url` is available in ESM. In bundled CJS, esbuild provides
- * a shim, so this also works there (the value will be a file:// URL
- * pointing at dist/server.cjs).
  */
 const moduleUrl: string =
   typeof import.meta !== 'undefined' &&
@@ -77,36 +74,65 @@ export const esmDirname: string =
     : dirname(esmFilename);
 
 /**
- * A `require` function that works in both ESM (via `createRequire`) and
- * CommonJS (native global). Use this anywhere a diagnostic check needs
- * to dynamically load a CommonJS-only native addon (robotjs, koffi,
- * win32-api, screenshot-desktop, etc.).
- *
- * Example:
- * ```ts
- * import { esmRequire } from './esmShim';
- * try {
- *   const robot = esmRequire('robotjs');
- *   // probe robot.getMousePos() ...
- * } catch (err) {
- *   // surface the real underlying error, not "require is not defined"
- * }
- * ```
+ * Builds a require resolver that accurately locates packages whether running
+ * in dev mode (project root node_modules) or in a packaged Electron app
+ * (resources/app.asar/node_modules and resources/app.asar.unpacked/node_modules).
  */
-export const esmRequire: NodeRequire =
-  typeof (globalThis as { require?: NodeRequire }).require === 'function'
-    ? (globalThis as { require?: NodeRequire }).require as NodeRequire
-    : nodeCreateRequire(moduleUrl);
+function createPackagedSafeRequire(): NodeRequire {
+  const possibleBases: string[] = [];
+
+  if (process.resourcesPath) {
+    possibleBases.push(
+      path.join(process.resourcesPath, 'app.asar', 'package.json'),
+      path.join(process.resourcesPath, 'package.json'),
+    );
+  }
+
+  try {
+    const res = resourcesRoot();
+    if (res) {
+      possibleBases.push(
+        path.join(res, 'app.asar', 'package.json'),
+        path.join(res, 'package.json'),
+      );
+    }
+  } catch {}
+
+  for (const base of possibleBases) {
+    try {
+      if (fs.existsSync(base)) {
+        return nodeCreateRequire(base);
+      }
+    } catch {}
+  }
+
+  if (typeof (globalThis as { require?: NodeRequire }).require === 'function') {
+    return (globalThis as { require?: NodeRequire }).require as NodeRequire;
+  }
+
+  return nodeCreateRequire(moduleUrl);
+}
 
 /**
- * Dynamically imports a module via the standard ESM `import()`
- * expression. This is the ESM-native way to do dynamic imports and is
- * already safe in both ESM and CJS contexts — but centralising the
- * helper here makes it easy for diagnostic checks to opt for dynamic
- * `import()` instead of `require()` when loading packages that ship
- * proper ESM entry points (e.g. 'playwright', 'active-win').
- *
- * Returned as a typed alias so callers don't need to repeat the cast.
+ * A `require` function that works across ESM, CommonJS, and packaged Electron apps.
  */
-export const esmImport: (specifier: string) => Promise<unknown> =
-  (specifier: string) => import(specifier);
+export const esmRequire: NodeRequire = createPackagedSafeRequire();
+
+/**
+ * Dynamically imports a module via ESM `import()`, falling back to `esmRequire()`
+ * if native import fails (such as for unpacked native packages in packaged mode).
+ */
+export const esmImport = async (specifier: string): Promise<unknown> => {
+  try {
+    return await import(specifier);
+  } catch {
+    try {
+      return esmRequire(specifier);
+    } catch {
+      if (specifier === 'playwright') {
+        return esmRequire('playwright-core');
+      }
+      throw new Error(`Cannot resolve package '${specifier}' in runtime`);
+    }
+  }
+};

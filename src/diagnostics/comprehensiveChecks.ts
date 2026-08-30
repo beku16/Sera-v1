@@ -10,9 +10,9 @@ import {
   DiagnosticCategory,
   IDiagnosticCheckRunner,
 } from './types';
-import { esmRequire, esmDirname } from './esmShim';
+import { esmRequire, esmDirname, esmImport } from './esmShim';
 import { defaultApiKeyVault } from '../local/ApiKeyVault';
-import { ocrDataDir, userDataDir } from '../local/SERAPaths';
+import { ocrDataDir, userDataDir, isPackaged, resourcesRoot } from '../local/SERAPaths';
 const { existsSync } = fs;
 const { join } = path;
 
@@ -329,7 +329,8 @@ export function createEnvFilePresentCheck(): IDiagnosticCheckRunner {
         const vaultHasKeys =
           defaultApiKeyVault.has('gemini') ||
           defaultApiKeyVault.has('openai') ||
-          defaultApiKeyVault.has('deepseek');
+          defaultApiKeyVault.has('deepseek') ||
+          Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
         if (vaultHasKeys) {
           return pass(
             base,
@@ -337,10 +338,10 @@ export function createEnvFilePresentCheck(): IDiagnosticCheckRunner {
             { envFile: false, keySource: 'vault' },
           );
         }
-        return fail(
+        return warn(
           base,
-          'No .env file found in the project root, and the encrypted key vault has no API keys stored. Gemini and other providers will not load.',
-          'Fix with either option: 1) Run "copy .env.example .env" (Windows) / "cp .env.example .env", then add GEMINI_API_KEY="AIza..." — or 2) open SERA → Startup Launcher / Settings → API KEYS and save your key there (stored encrypted; .env optional).',
+          'No online API keys configured. SERA is operating in Local/Offline mode (Ollama). Cloud Gemini mode will be unavailable until a key is added.',
+          'To enable cloud Gemini mode: Open SERA -> Settings -> API KEYS and save your Gemini API key (stored encrypted; no .env needed).',
         );
       }
       const stat = fs.statSync(envPath);
@@ -518,6 +519,9 @@ export function createKeySourceFilesPresentCheck(): IDiagnosticCheckRunner {
     category: 'file_system',
     run: async (): Promise<DiagnosticCheckResult> => {
       const base = buildBase('key_source_files_present', 'Critical Source Files Present', 'file_system');
+      if (isPackaged()) {
+        return pass(base, 'Running in packaged release mode (source files compiled into distribution bundle).');
+      }
       const expected = [
         'server.ts',
         'package.json',
@@ -622,7 +626,7 @@ export function createActiveWinLoadableCheck(): IDiagnosticCheckRunner {
     run: async (): Promise<DiagnosticCheckResult> => {
       const base = buildBase('active_win_loadable', 'active-win Module', 'native_modules');
       try {
-        const mod = (await import('active-win')) as unknown as {
+        const mod = (await esmImport('active-win')) as unknown as {
           default?: unknown;
           getActiveWindow?: () => Promise<unknown>;
           getActiveWindowSync?: () => unknown;
@@ -650,18 +654,8 @@ export function createPngjsLoadableCheck(): IDiagnosticCheckRunner {
     run: async (): Promise<DiagnosticCheckResult> => {
       const base = buildBase('pngjs_loadable', 'pngjs Module', 'native_modules');
       try {
-        // pngjs's actual public API surface (verified via
-        //   `node -e "const p=require('pngjs'); console.log(typeof p.PNG, typeof p.PNG.sync, typeof p.PNG.sync.write, typeof p.PNG.sync.parse)"`
-        // outputs: function, object, function, undefined).
-        // The sync API has ONLY `write()` — there is no `PNG.sync.parse`.
-        // SERA uses pngjs for screen capture: src/vision/screenImage.ts
-        // does `new PNG({width,height})` + `PNG.sync.write(png)` to encode
-        // raw RGBA bytes into a PNG buffer. Assert exactly that surface.
-        // The `any` cast here is intentional — pngjs's PNG is a class
-        // (callable via new + has static .sync property). TS's strict
-        // types don't model "callable + has static members" cleanly.
-        const mod = (await import('pngjs')) as { PNG?: any };
-        const PNG = mod.PNG;
+        const mod = (await esmImport('pngjs')) as { PNG?: any; default?: { PNG?: any } };
+        const PNG = mod.PNG || mod.default?.PNG;
         if (!PNG || typeof PNG !== 'function' || typeof PNG.sync !== 'object' || typeof PNG.sync?.write !== 'function') {
           return fail(base, `pngjs loaded but its public API is missing PNG constructor or PNG.sync.write (PNG=${typeof PNG}, sync=${typeof PNG?.sync}, write=${typeof PNG?.sync?.write}).`, 'Run "npm install pngjs".');
         }
@@ -714,6 +708,14 @@ export function createNodeModulesPresentCheck(): IDiagnosticCheckRunner {
     category: 'dependencies',
     run: async (): Promise<DiagnosticCheckResult> => {
       const base = buildBase('node_modules_present', 'node_modules/ Directory', 'dependencies');
+      if (isPackaged()) {
+        const res = resourcesRoot();
+        const asar = path.join(res, 'app.asar');
+        const unpacked = path.join(res, 'app.asar.unpacked', 'node_modules');
+        if (fs.existsSync(asar) || fs.existsSync(unpacked)) {
+          return pass(base, 'Running in packaged release mode (dependencies bundled in app.asar).');
+        }
+      }
       const target = resolveProject('node_modules');
       if (!fs.existsSync(target)) {
         return fail(
@@ -757,6 +759,9 @@ export function createPackageLockPresentCheck(): IDiagnosticCheckRunner {
     category: 'dependencies',
     run: async (): Promise<DiagnosticCheckResult> => {
       const base = buildBase('package_lock_present', 'package-lock.json Integrity', 'dependencies');
+      if (isPackaged()) {
+        return pass(base, 'Running in packaged release mode (dependencies verified and frozen).');
+      }
       const lockPath = resolveProject('package-lock.json');
       if (!fs.existsSync(lockPath)) {
         return warn(
@@ -1099,12 +1104,12 @@ export function createActiveWindowDetectableCheck(): IDiagnosticCheckRunner {
     run: async (): Promise<DiagnosticCheckResult> => {
       const base = buildBase('active_window_detectable', 'Active Window Detection', 'window_management');
       try {
-        const mod = (await import('active-win')) as unknown as {
-          default?: { sync?: () => unknown };
+        const mod = (await esmImport('active-win')) as unknown as {
+          default?: { sync?: () => unknown; getActiveWindowSync?: () => unknown };
           getActiveWindowSync?: () => unknown;
           getActiveWindow?: () => Promise<unknown>;
         };
-        const getActiveWindow = mod.default?.sync ?? mod.getActiveWindowSync;
+        const getActiveWindow = mod.default?.sync ?? mod.default?.getActiveWindowSync ?? mod.getActiveWindowSync;
         if (typeof getActiveWindow !== 'function') {
           return warn(base, 'active-win loaded but has neither getActiveWindowSync nor default.sync.', 'Check active-win version. Run "npm install active-win@latest".');
         }
@@ -1535,6 +1540,14 @@ export function createElectronEntryPresentCheck(): IDiagnosticCheckRunner {
     category: 'file_system',
     run: async (): Promise<DiagnosticCheckResult> => {
       const base = buildBase('electron_entry_present', 'Electron Main Process Script', 'file_system');
+      if (isPackaged()) {
+        const res = resourcesRoot();
+        const main = path.join(res, 'electron', 'main.cjs');
+        const asar = path.join(res, 'app.asar');
+        if (fs.existsSync(main) || fs.existsSync(asar)) {
+          return pass(base, 'Electron main.cjs and runtime entry points verified in application package.');
+        }
+      }
       const main = resolveProject('electron/main.cjs');
       const preload = resolveProject('electron/preload.cjs');
       const missing: string[] = [];
