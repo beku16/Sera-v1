@@ -5,7 +5,9 @@ node_modules/
 
 # Production / Build output
 dist/
-build/
+# NOTE: build/ is NOT ignored — it holds electron-builder buildResources
+# (icon.ico, icon-builder.py) that MUST be committed. Vite/esbuild output
+# goes to dist/, which stays ignored.
 coverage/
 
 # Local data & memories

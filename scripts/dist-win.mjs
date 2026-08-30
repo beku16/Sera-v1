@@ -49,14 +49,34 @@ function run(label, command, args, opts = {}) {
 run('version', process.execPath, ['scripts/write-version.mjs']);
 
 // 2) App icon (Windows .ico from the repo's PNG set).
-if (!existsSync(path.join(root, 'build', 'icon.ico'))) {
-  try {
-    run('icon', 'python3', ['build/icon-builder.py']);
-  } catch {
-    console.warn('[dist-win] icon generation unavailable — electron-builder will use its default icon.');
-  }
-} else {
+//    icon.ico is COMMITTED at build/icon.ico — this generator is only a
+//    self-heal path when someone regenerates the PNG set without the ico.
+//    Genuinely non-fatal: if no Python is available we warn and continue
+//    (electron-builder falls back to its default Electron icon).
+if (existsSync(path.join(root, 'build', 'icon.ico'))) {
   console.log('[dist-win] build/icon.ico present — skipping icon generation.');
+} else {
+  console.warn('[dist-win] build/icon.ico MISSING — attempting regeneration.');
+  // python3 (Linux/macOS, Windows App-Execution-Alias), python (Windows
+  // installer PATH), py -3 (official Windows launcher) — first that works.
+  const pythonCandidates = isWin ? ['python', 'py -3', 'python3'] : ['python3', 'python'];
+  let generated = false;
+  for (const candidate of pythonCandidates) {
+    const cmd = candidate.split(' ')[0];
+    const rest = candidate.split(' ').slice(1);
+    const result = spawnSync(cmd, [...rest, 'build/icon-builder.py'], { cwd: root, stdio: 'inherit', shell: isWin });
+    if (result.status === 0 && existsSync(path.join(root, 'build', 'icon.ico'))) {
+      generated = true;
+      break;
+    }
+  }
+  if (!generated) {
+    console.warn(
+      '[dist-win] Icon regeneration unavailable (no Python/Pillow) — continuing.\n' +
+      '  electron-builder will use its default icon. To get the SERA icon:\n' +
+      '    pip install Pillow && python build/icon-builder.py',
+    );
+  }
 }
 
 // 3) Frontend + backend build (also regenerates the version module).
