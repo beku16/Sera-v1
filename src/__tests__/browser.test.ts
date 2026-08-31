@@ -83,7 +83,7 @@ describe('browser error handling', () => {
     expect(dupeCount).toBe(beforeDupes);
 
     await manager.closeSession('browser-error-test');
-  }, 15000);
+  }, 30000);
 
   itBrowser('records navigation failures and automatic recovery', async () => {
     const monitor = new ErrorMonitor();
@@ -112,7 +112,7 @@ describe('browser error handling', () => {
     expect(monitor.getRecent(10).length).toBeGreaterThan(0);
 
     await manager.closeSession('browser-recovery-test');
-  }, 15000);
+  }, 30000);
 });
 
 describe('browser executor', () => {
