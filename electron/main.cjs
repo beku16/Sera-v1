@@ -866,6 +866,9 @@ ipcMain.handle('local-speech-start', () => {
   if (localSpeechStopTimer) {
     clearTimeout(localSpeechStopTimer);
     localSpeechStopTimer = null;
+    if (localSpeech) {
+      localSpeech._isStopping = false;
+    }
     console.log('[LOCAL_SPEECH_STOP_CANCELLED]');
   }
   if (localSpeech && localSpeech.exitCode === null && !localSpeech.killed) {
@@ -902,7 +905,21 @@ ipcMain.handle('local-speech-start', () => {
       path.join(process.resourcesPath, 'node_modules'),
     ].join(path.delimiter);
   }
-  const worker = spawn(nodeExecutable, [path.join(__dirname, 'speech-host.cjs')], {
+  let speechHostScript = path.join(__dirname, 'speech-host.cjs');
+  if (isPackagedApp) {
+    const candidates = [
+      path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'speech-host.cjs'),
+      process.resourcesPath ? path.join(process.resourcesPath, 'electron', 'speech-host.cjs') : '',
+      process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'speech-host.cjs') : '',
+      speechHostScript,
+    ].filter(Boolean);
+    for (const c of candidates) {
+      try {
+        if (fs.existsSync(c)) { speechHostScript = c; break; }
+      } catch {}
+    }
+  }
+  const worker = spawn(nodeExecutable, [speechHostScript], {
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: speechEnv,

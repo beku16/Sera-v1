@@ -860,6 +860,8 @@ export class AutoRepairEngine {
     registerInfoHandler('input_resilience_keymap', 'The Windows key-map ships in src/actions/WindowsProviders.ts. If key presses get rejected again after a code update: git pull + npm start (the launcher rebuilds), or report which key failed.');
     registerInfoHandler('voice_dsp_pipeline', 'Discord-style mic cleanup (noise suppression, echo cancellation, auto mic volume) is controlled in Settings → MIC & SPEAKERS. Defaults live in src/config/config.ts.');
     registerInfoHandler('voice_sleep_intents', 'Sleep commands ("full quit", "bye sera", "stop listening") are matched in src/utils/sleepCommands.ts — deterministic, before any AI model. If SERA ignores one, restart SERA and try again.');
+    registerInfoHandler('desktop_sapi_worker', 'Windows SAPI speech worker lives in electron/local-speech.ps1. If missing or corrupted, reinstall or pull latest repository files.');
+    registerInfoHandler('system_control_inputs', 'Hardware input uses native Win32 user32.dll FFI via koffi. If input is rejected, ensure koffi is built for the current architecture or run "npm rebuild koffi".');
   }
 }
 

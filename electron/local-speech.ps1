@@ -83,6 +83,10 @@ public sealed class SeraSpeechBridge : IDisposable {
     try {
       next.LoadGrammar(new DictationGrammar());
       next.SetInputToDefaultAudioDevice();
+      next.EndSilenceTimeout = TimeSpan.FromMilliseconds(500);
+      next.EndSilenceTimeoutAmbiguous = TimeSpan.FromMilliseconds(750);
+      next.BabbleTimeout = TimeSpan.FromSeconds(0);
+      next.InitialSilenceTimeout = TimeSpan.FromSeconds(0);
     } catch (Exception setupError) {
       next.Dispose();
       throw new InvalidOperationException(
@@ -101,6 +105,7 @@ public sealed class SeraSpeechBridge : IDisposable {
     recognizer.AudioStateChanged += OnAudioStateChanged;
     recognizer.SpeechHypothesized += OnSpeechHypothesized;
     recognizer.SpeechRecognized += OnSpeechRecognized;
+    recognizer.SpeechRecognitionRejected += OnSpeechRecognitionRejected;
     recognizer.RecognizeCompleted += OnRecognizeCompleted;
   }
 
@@ -150,6 +155,13 @@ public sealed class SeraSpeechBridge : IDisposable {
     if (e.Result != null && !string.IsNullOrWhiteSpace(e.Result.Text)) {
       Write("transcript", "text", e.Result.Text, "confidence", e.Result.Confidence.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
+  }
+
+  private void OnSpeechRecognitionRejected(object sender, SpeechRecognitionRejectedEventArgs e) {
+    lastAudioEventUtc = DateTime.UtcNow;
+    float conf = e.Result != null ? e.Result.Confidence : 0f;
+    string txt = e.Result != null ? e.Result.Text : "";
+    Write("diagnostic", "event", "SPEECH_REJECTED", "confidence", conf.ToString(System.Globalization.CultureInfo.InvariantCulture), "text", txt);
   }
 
   private void OnRecognizeCompleted(object sender, RecognizeCompletedEventArgs e) {

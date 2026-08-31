@@ -125,6 +125,13 @@ export class LocalSession {
   private vadPreRoll: Int16Array[] = [];
   private vadNoiseFloor = 260;           // adaptive RMS floor (int16 scale)
   private micProblemNotified = false;
+  /* -- Desktop Speech SAPI & Visualizer State -- */
+  private lastFinalUtterance = '';
+  private lastFinalUtteranceTimestamp = 0;
+  private lastLocalUserTranscriptText = '';
+  private lastLocalUserTranscriptTimestamp = 0;
+  private sapiMicLevel = 0;
+  private ttsSpeakingEndedAt = 0;
 
   constructor(
     stateManager: AssistantStateManager,
@@ -263,11 +270,20 @@ export class LocalSession {
         const sender = msg.sender === 'user' ? 'user' : 'sera';
         const text = typeof msg.text === 'string' ? msg.text : '';
         if (!text) break;
-        // Smart barge-in (whisper path + typed-text echo): the moment the
-        // user's words arrive while she talks, cut her voice.
-        if (sender === 'user' && msg.isPartial !== true && this.stateManager.getState() === 'speaking') {
-          console.log('[SERA-LOCAL] 🎤 User speech while SERA speaking — auto barge-in');
-          this.interrupt();
+        // If this user transcript was already emitted locally, skip server echo
+        if (sender === 'user') {
+          const cleanText = text.trim().toLowerCase();
+          if (
+            this.lastLocalUserTranscriptText &&
+            this.lastLocalUserTranscriptText.toLowerCase() === cleanText &&
+            Date.now() - this.lastLocalUserTranscriptTimestamp < 8000
+          ) {
+            break;
+          }
+          if (msg.isPartial !== true && this.stateManager.getState() === 'speaking') {
+            console.log('[LOCAL_VOICE] 🎤 User speech while SERA speaking — auto barge-in');
+            this.interrupt();
+          }
         }
         this.callbacks.onTranscript?.({
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -278,6 +294,7 @@ export class LocalSession {
         });
         // Speak Sera's local replies via browser TTS.
         if (sender === 'sera' && msg.isPartial !== true) {
+          console.log(`[LOCAL_VOICE] OLLAMA_REQUEST_END length=${text.length} response="${text.slice(0, 60)}..."`);
           this.speak(text);
         }
         break;
@@ -383,6 +400,7 @@ export class LocalSession {
         }
         return;
       }
+      console.log(`[LOCAL_VOICE] TTS_START text="${text.slice(0, 60)}..."`);
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.volume = Math.max(0, Math.min(1, this.settings.outputVolume));
       utterance.rate = 1.04;
@@ -390,11 +408,15 @@ export class LocalSession {
         if (this.isConnected) this.stateManager.transitionTo('speaking', 'Local response playing');
       };
       utterance.onend = () => {
+        this.ttsSpeakingEndedAt = Date.now();
+        console.log('[LOCAL_VOICE] TTS_END');
         if (this.isConnected && this.stateManager.getState() === 'speaking') {
           this.stateManager.transitionTo('listening', 'Waiting for user voice input');
         }
       };
       utterance.onerror = () => {
+        this.ttsSpeakingEndedAt = Date.now();
+        console.log('[LOCAL_VOICE] TTS_END error_or_cancelled');
         if (this.isConnected && this.stateManager.getState() === 'speaking') {
           this.stateManager.transitionTo('listening', 'Waiting for user voice input');
         }
@@ -419,62 +441,6 @@ export class LocalSession {
   }
 
   /**
-   * Shared pipeline for a FINAL desktop-STT utterance: strip the wake
-   * phrase, apply the speaking-state guards (self-hearing suppression +
-   * barge-in), emit the transcript and forward it to the agent.
-   * Returns true when the utterance produced a transcript event.
-   */
-  private handleVoiceTranscript(raw: string, idPrefix: string): boolean {
-    // If the user addresses SERA by name inside the session, strip the
-    // wake phrase ("hey sera open chrome" → "open chrome"). A bare wake
-    // word alone is noise here, not a command.
-    const prompt = extractWakePrompt(raw);
-    const text = (prompt === null ? raw : (prompt ?? '')).trim();
-    if (!text) return false;
-
-    const speakingNow = this.stateManager.getState() === 'speaking';
-    if (speakingNow) {
-      const intent = matchSleepIntent(text);
-      if (intent === 'sleep') {
-        // Control commands must pass through even while she talks.
-        this.callbacks.onTranscript?.({
-          id: `${idPrefix}${Date.now()}`,
-          sender: 'user',
-          text,
-          timestamp: Date.now(),
-          isPartial: false,
-        });
-        this.sendText(text);
-        return true;
-      }
-      // Real user speech while SERA speaks → smart barge-in: cut her voice
-      // NOW and process the utterance. Everything else (usually her own
-      // TTS echoing back through the mic) is suppressed.
-      console.log('[SERA-LOCAL] 🎤 User speech while SERA speaking — auto barge-in');
-      this.interrupt();
-      this.callbacks.onTranscript?.({
-        id: `${idPrefix}${Date.now()}`,
-        sender: 'user',
-        text,
-        timestamp: Date.now(),
-        isPartial: false,
-      });
-      this.sendText(text);
-      return true;
-    }
-
-    this.callbacks.onTranscript?.({
-      id: `${idPrefix}${Date.now()}`,
-      sender: 'user',
-      text,
-      timestamp: Date.now(),
-      isPartial: false,
-    });
-    this.sendText(text);
-    return true;
-  }
-
-  /**
    * Desktop voice input: subscribe to the shared SAPI dictation worker via
    * IPC and become an owner so the worker outlives the wake-word listener
    * handing over control to this session.
@@ -490,8 +456,107 @@ export class LocalSession {
         if (typeof payload?.text !== 'string') return;
         const raw = payload.text.trim();
         if (raw.length < 2) return;
-        const handled = this.handleVoiceTranscript(raw, 'stt-desktop-');
-        if (!handled) return;
+
+        const isHypothesis =
+          payload.isHypothesis === 'true' ||
+          payload.isHypothesis === true ||
+          payload.isPartial === true;
+
+        if (isHypothesis) {
+          console.log(`[LOCAL_VOICE] PARTIAL_TRANSCRIPT text="${raw}"`);
+          // Live hypothesis: show partial progress and check barge-in
+          this.callbacks.onTranscript?.({
+            id: 'stt-desktop-interim',
+            sender: 'user',
+            text: raw,
+            timestamp: Date.now(),
+            isPartial: true,
+          });
+          if (this.stateManager.getState() === 'speaking') {
+            console.log('[LOCAL_VOICE] Barge-in detected during output');
+            this.interrupt();
+          }
+          return;
+        }
+
+        // Discrete recognized speech utterance from SAPI
+        const confidence = typeof payload.confidence === 'number'
+          ? payload.confidence
+          : (typeof payload.confidence === 'string' ? parseFloat(payload.confidence) : 1.0);
+
+        // Acoustic noise / low-confidence rejection (< 0.28)
+        if (!isNaN(confidence) && confidence < 0.28) {
+          console.log(`[LOCAL_VOICE] LOW_CONFIDENCE_REJECTED text="${raw}" confidence=${confidence.toFixed(2)}`);
+          return;
+        }
+
+        const now = Date.now();
+        const speakingNow = this.stateManager.getState() === 'speaking';
+        if (speakingNow || now - this.ttsSpeakingEndedAt < 350) {
+          const intent = matchSleepIntent(raw);
+          if (intent === 'sleep' || intent === 'stop_speaking') {
+            this.interrupt();
+            if (intent === 'stop_speaking') return;
+          } else {
+            // User speech while SERA speaks → barge in
+            console.log('[LOCAL_VOICE] 🎤 User speech while SERA speaking — auto barge-in');
+            this.interrupt();
+          }
+        }
+
+        // Strip leading wake phrases ("Hey Sera open Chrome" -> "open Chrome")
+        const prompt = extractWakePrompt(raw);
+        const text = (prompt === null ? raw : (prompt ?? '')).trim();
+        if (!text || text.length < 2) return;
+
+        // Rapid-duplicate guard: ignore identical final utterance within 1500ms
+        if (
+          this.lastFinalUtterance &&
+          this.lastFinalUtterance.toLowerCase() === text.toLowerCase() &&
+          now - this.lastFinalUtteranceTimestamp < 1500
+        ) {
+          console.log(`[LOCAL_VOICE] FINAL_TRANSCRIPT_DUPLICATE text="${text}"`);
+          return;
+        }
+
+        this.lastFinalUtterance = text;
+        this.lastFinalUtteranceTimestamp = now;
+        this.lastLocalUserTranscriptText = text;
+        this.lastLocalUserTranscriptTimestamp = now;
+
+        const transcriptId = `stt-desktop-${now}`;
+        console.log(`[LOCAL_VOICE] FINAL_TRANSCRIPT_ACCEPTED text="${text}" confidence=${confidence.toFixed(2)} id="${transcriptId}"`);
+
+        // Emit single final user transcript to UI
+        this.callbacks.onTranscript?.({
+          id: transcriptId,
+          sender: 'user',
+          text,
+          timestamp: now,
+          isPartial: false,
+        });
+
+        const intent = matchSleepIntent(text);
+        if (intent === 'sleep') {
+          console.log('[LOCAL_VOICE] 😴 Sleep intent confirmed');
+          this.sendText(text);
+          return;
+        }
+        if (intent === 'stop_speaking') {
+          console.log('[LOCAL_VOICE] 🤫 Stop-speaking intent — interrupting output');
+          this.interrupt();
+          return;
+        }
+
+        // Exactly ONE turn to the local agent
+        this.sendText(text);
+      }),
+      desktop.onLocalSpeechDiagnostic((payload) => {
+        // Fallback mic meter from SAPI audio levels
+        if (typeof payload?.level === 'number') {
+          const normLevel = Math.max(0, Math.min(1, payload.level / 100));
+          this.sapiMicLevel = normLevel;
+        }
       }),
       desktop.onLocalSpeechError((payload) => {
         if (this.desktopErrorNotified) return;
@@ -500,6 +565,7 @@ export class LocalSession {
       }),
     );
 
+    console.log('[LOCAL_VOICE] SPEECH_WORKER_START requested');
     void desktop
       .startLocalSpeech()
       .then(() => desktop.getLocalSpeechState())
@@ -507,7 +573,7 @@ export class LocalSession {
         if (state.state === 'ERROR') {
           throw new Error(`SAPI worker exited: ${state.exitCode ?? 'unknown'}`);
         }
-        console.log(`[SERA-LOCAL] Desktop STT active (pid=${state.pid}, owners=${state.owners})`);
+        console.log(`[LOCAL_VOICE] MIC_START backend=SAPI pid=${state.pid} owners=${state.owners}`);
       })
       .catch((err) => {
         if (this.desktopErrorNotified) return;
@@ -632,6 +698,7 @@ export class LocalSession {
       }
       this.desktopUnsubscribers = [];
       this.desktopStt = false;
+      console.log('[LOCAL_VOICE] MIC_STOP requested for desktop SAPI');
       void window.seraDesktop?.stopLocalSpeech().catch(() => undefined);
       return;
     }
@@ -809,15 +876,23 @@ export class LocalSession {
     if (this.settings.inputDeviceId && this.settings.inputDeviceId !== 'default') {
       audio.deviceId = { exact: this.settings.inputDeviceId };
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio });
-    this.micStream = stream;
-    const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    this.micContext = new AudioCtxClass();
-    const source = this.micContext.createMediaStreamSource(stream);
-    this.micAnalyser = this.micContext.createAnalyser();
-    this.micAnalyser.fftSize = 256;
-    this.micAnalyser.smoothingTimeConstant = 0.8;
-    source.connect(this.micAnalyser);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio });
+      this.micStream = stream;
+      const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.micContext = new AudioCtxClass();
+      if (this.micContext.state === 'suspended') {
+        void this.micContext.resume().catch(() => undefined);
+      }
+      const source = this.micContext.createMediaStreamSource(stream);
+      this.micAnalyser = this.micContext.createAnalyser();
+      this.micAnalyser.fftSize = 256;
+      this.micAnalyser.smoothingTimeConstant = 0.8;
+      source.connect(this.micAnalyser);
+      console.log('[LOCAL_AUDIO] STREAM_STARTED mic_context_state=' + this.micContext.state);
+    } catch (err) {
+      console.warn('[LOCAL_AUDIO] getUserMedia meter unavailable (using SAPI audio telemetry):', err);
+    }
   }
 
   private stopMicMeter(): void {
@@ -856,6 +931,7 @@ export class LocalSession {
       this.micContext = null;
     }
     this.micLevel = 0;
+    this.sapiMicLevel = 0;
   }
 
   private flushPendingText(): void {
@@ -887,7 +963,11 @@ export class LocalSession {
   public sendText(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
+    this.lastLocalUserTranscriptText = trimmed;
+    this.lastLocalUserTranscriptTimestamp = Date.now();
+    console.log(`[LOCAL_VOICE] LOCAL_SESSION_TEXT text="${trimmed}"`);
     if (this.isReady && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log(`[LOCAL_VOICE] OLLAMA_REQUEST_START prompt="${trimmed.slice(0, 50)}..."`);
       this.ws.send(JSON.stringify({ type: 'text', text: trimmed }));
     } else {
       this.pendingTextMessages.push(trimmed);
@@ -916,18 +996,24 @@ export class LocalSession {
 
     if (isListening && this.micAnalyser) {
       this.micAnalyser.getByteFrequencyData(this.micLevelArray as Uint8Array<ArrayBuffer>);
-      // Approximate RMS level from frequency bins.
       let sum = 0;
       for (let i = 0; i < this.micLevelArray.length; i++) sum += this.micLevelArray[i];
       this.micLevel = Math.min(1, sum / (this.micLevelArray.length * 140));
+      this.freqArray.set(this.micLevelArray.subarray(0, this.freqArray.length));
+    } else if (isListening && this.sapiMicLevel > 0) {
+      this.micLevel = this.sapiMicLevel;
+      const peakVal = Math.round(this.sapiMicLevel * 220);
+      for (let i = 0; i < this.freqArray.length; i++) {
+        const falloff = 1 - (i / this.freqArray.length) * 0.45;
+        this.freqArray[i] = Math.max(0, Math.min(255, Math.round(peakVal * falloff * (0.8 + 0.4 * Math.sin(i * 0.5)))));
+      }
     } else {
       this.micLevel = 0;
+      this.freqArray.fill(0);
     }
 
     if (isSpeaking && this.player) {
       this.player.getFrequencyData(this.freqArray);
-    } else {
-      this.freqArray.fill(0);
     }
 
     return {

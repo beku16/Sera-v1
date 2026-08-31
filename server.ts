@@ -1575,7 +1575,7 @@ async function handleLiveConnection(clientWs: WebSocket, req: http.IncomingMessa
         send: (image) => {
           if (!session || !isSessionActive) return false;
           try {
-            session.sendRealtimeInput({ media: { data: image.data, mimeType: 'image/jpeg' } });
+            session.sendRealtimeInput({ video: { data: image.data, mimeType: 'image/jpeg' } });
             return true;
           } catch (err) {
             logSession('SCREEN_SHARE_FRAME_REJECTED', { error: sanitizeError(err) });
@@ -1606,13 +1606,13 @@ async function handleLiveConnection(clientWs: WebSocket, req: http.IncomingMessa
   // ── v1.7.0 BROWSER SCREEN VISION — live-session side ──────────
   // This hook is what the ScreenVisionRegistry drives: browser share
   // frames arrive on the /api/screen-vision socket and are forwarded
-  // through HERE into this Gemini session (realtimeInput media — the
+  // through HERE into this Gemini session (realtimeInput video — the
   // wire path Google designed for continuous vision).
   const screenVisionHook: ScreenVisionSessionHook = {
     sendMedia: (frame) => {
       if (!session || !isSessionActive) return false;
       try {
-        session.sendRealtimeInput({ media: { data: frame.data, mimeType: 'image/jpeg' } });
+        session.sendRealtimeInput({ video: { data: frame.data, mimeType: 'image/jpeg' } });
         return true;
       } catch (err) {
         logSession('SCREEN_VISION_FRAME_REJECTED', { error: sanitizeError(err) });
@@ -2127,7 +2127,7 @@ async function handleLiveConnection(clientWs: WebSocket, req: http.IncomingMessa
           const direct = normalizeFrameData(payload.data);
           if (direct) {
             try {
-              session.sendRealtimeInput({ media: { data: direct, mimeType: 'image/jpeg' } });
+              session.sendRealtimeInput({ video: { data: direct, mimeType: 'image/jpeg' } });
               logSession('SCREEN_VISION_ONESHOT_DIRECT', { dataChars: direct.length });
             } catch (err) {
               logSession('SCREEN_VISION_ONESHOT_REJECTED', { error: sanitizeError(err) });

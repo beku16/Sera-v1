@@ -184,20 +184,34 @@ export const FEATURE_CHECK_FACTORIES: Array<() => IDiagnosticCheckRunner> = [
       try {
         const { defaultOllamaClient } = await import('../local/OllamaClient');
         const running = await withTimeout(defaultOllamaClient.isRunning(), 5000, false);
-        if (running) {
-          return pass(
+        if (!running) {
+          return warn(
             'local_mode_ollama',
             'Local Mode Brain (Ollama)',
             'local_mode',
-            'Ollama daemon is reachable — Local Mode (offline brain) fully operational.',
+            'Ollama daemon is not running — Local Mode offline brain is currently offline. Online mode remains fully operational.',
+            'Start the Ollama application or install it from https://ollama.com and run: ollama pull qwen2.5:3b-instruct',
           );
         }
-        return warn(
+
+        const models = await withTimeout(defaultOllamaClient.listModels(), 5000, []);
+        if (models.length === 0) {
+          return warn(
+            'local_mode_ollama',
+            'Local Mode Brain (Ollama)',
+            'local_mode',
+            'Ollama daemon is running, but NO local models are installed.',
+            'Install a model in Settings → MY PC → INSTALL, or run in terminal: ollama pull qwen2.5:3b-instruct',
+          );
+        }
+
+        const preferredModel = process.env.SERA_LOCAL_MODEL || models[0]?.name || 'llama3.2:3b-instruct-q4_K_M';
+        return pass(
           'local_mode_ollama',
           'Local Mode Brain (Ollama)',
           'local_mode',
-          'Ollama is not running — Local Mode will fall back to guided setup; Online mode unaffected.',
-          'Install Ollama from https://ollama.com and run: ollama pull qwen2.5:3b-instruct — or keep using Online mode (Settings toggle).',
+          `Ollama daemon active with ${models.length} installed model(s) (${models.slice(0, 3).map((m) => m.name).join(', ')}) — Local Mode operational.`,
+          { models: models.map((m) => m.name), activeModel: preferredModel },
         );
       } catch (err) {
         return warn(
@@ -651,6 +665,107 @@ export const FEATURE_CHECK_FACTORIES: Array<() => IDiagnosticCheckRunner> = [
           'tool_registry',
           `Sleep matcher probe failed: ${err instanceof Error ? err.message : String(err)}`,
           'Check src/utils/sleepCommands.ts loads cleanly.',
+        );
+      }
+    },
+  }),
+
+  // 14. Desktop SAPI speech worker resolution check
+  () => ({
+    id: 'desktop_sapi_worker',
+    name: 'Windows SAPI Desktop Speech & Wake Worker',
+    category: 'audio_pipeline',
+    run: async (): Promise<DiagnosticCheckResult> => {
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const { speechHostPath, resourcesRoot } = await import('../local/SERAPaths');
+        const candidates = [
+          speechHostPath(),
+          path.join(resourcesRoot(), 'electron', 'local-speech.ps1'),
+          path.join(resourcesRoot(), 'app.asar.unpacked', 'electron', 'local-speech.ps1'),
+          path.join(process.cwd(), 'electron', 'local-speech.ps1'),
+        ];
+        const found = candidates.filter((c) => {
+          try { return fs.existsSync(c); } catch { return false; }
+        });
+        if (process.platform === 'win32' && found.length === 0) {
+          return fail(
+            'desktop_sapi_worker',
+            'Windows SAPI Desktop Speech & Wake Worker',
+            'audio_pipeline',
+            'SAPI speech worker script (local-speech.ps1) could not be located on disk. Packaged voice & wake will be disabled.',
+            'Ensure electron/local-speech.ps1 is in asarUnpack and extraResources in electron-builder.yml.',
+          );
+        }
+        return pass(
+          'desktop_sapi_worker',
+          'Windows SAPI Desktop Speech & Wake Worker',
+          'audio_pipeline',
+          `SAPI desktop speech worker available on disk (${found.length} valid script location(s) resolved).`,
+          { locations: found },
+        );
+      } catch (err) {
+        return warn(
+          'desktop_sapi_worker',
+          'Windows SAPI Desktop Speech & Wake Worker',
+          'audio_pipeline',
+          `SAPI worker check failed: ${err instanceof Error ? err.message : String(err)}`,
+          'Verify electron/local-speech.ps1 is intact.',
+        );
+      }
+    },
+  }),
+
+  // 15. Windows System Control (Mouse Scroll & Key Navigation)
+  () => ({
+    id: 'system_control_inputs',
+    name: 'Windows System Control (Mouse Wheel & Navigation Keys)',
+    category: 'computer_control_native',
+    run: async (): Promise<DiagnosticCheckResult> => {
+      try {
+        const { loadWinUser32, WIN_VK_MAP } = await import('../actions/WindowsProviders');
+        if (process.platform !== 'win32') {
+          return pass(
+            'system_control_inputs',
+            'Windows System Control (Mouse Wheel & Navigation Keys)',
+            'computer_control_native',
+            `System control input available for platform "${process.platform}".`,
+          );
+        }
+        const user32 = loadWinUser32();
+        const hasPageUp = WIN_VK_MAP.pageup !== undefined && WIN_VK_MAP.pageup.vk === 0x21;
+        const hasPageDown = WIN_VK_MAP.pagedown !== undefined && WIN_VK_MAP.pagedown.vk === 0x22;
+        if (!hasPageUp || !hasPageDown) {
+          return fail(
+            'system_control_inputs',
+            'Windows System Control (Mouse Wheel & Navigation Keys)',
+            'computer_control_native',
+            'PageUp / PageDown virtual key mappings are missing or corrupt.',
+            'Verify WIN_VK_MAP in src/actions/WindowsProviders.ts.',
+          );
+        }
+        if (user32 && typeof user32.mouse_event === 'function' && typeof user32.keybd_event === 'function') {
+          return pass(
+            'system_control_inputs',
+            'Windows System Control (Mouse Wheel & Navigation Keys)',
+            'computer_control_native',
+            'Direct Win32 user32.dll FFI active (hardware-level mouse_event MOUSEEVENTF_WHEEL + keybd_event VK_PRIOR/VK_NEXT).',
+          );
+        }
+        return pass(
+          'system_control_inputs',
+          'Windows System Control (Mouse Wheel & Navigation Keys)',
+          'computer_control_native',
+          'RobotJS input provider active with scaled WHEEL_DELTA scrolling.',
+        );
+      } catch (err) {
+        return warn(
+          'system_control_inputs',
+          'Windows System Control (Mouse Wheel & Navigation Keys)',
+          'computer_control_native',
+          `Input control probe failed: ${err instanceof Error ? err.message : String(err)}`,
+          'Verify koffi and robotjs dependencies.',
         );
       }
     },

@@ -60,6 +60,77 @@ function requireRobot(): RobotApi | null {
 }
 
 // ---------------------------------------------------------------------------
+// Native Win32 user32.dll FFI input provider (koffi)
+// High-reliability hardware input for mouse scrolling and navigation keys.
+// ---------------------------------------------------------------------------
+
+export interface WinUser32 {
+  mouse_event: (flags: number, dx: number, dy: number, data: number, extra: number) => void;
+  keybd_event: (bVk: number, bScan: number, dwFlags: number, dwExtraInfo: number) => void;
+}
+
+let winUser32Instance: WinUser32 | null | undefined = undefined;
+
+export function loadWinUser32(): WinUser32 | null {
+  if (winUser32Instance !== undefined) return winUser32Instance;
+  if (process.platform !== 'win32') {
+    winUser32Instance = null;
+    return null;
+  }
+  try {
+    const koffi = require('koffi');
+    const user32 = koffi.load('user32.dll');
+    const mouse_event = user32.func('void __stdcall mouse_event(uint32 dwFlags, uint32 dx, uint32 dy, uint32 dwData, uintptr_t dwExtraInfo)');
+    const keybd_event = user32.func('void __stdcall keybd_event(uint8 bVk, uint8 bScan, uint32 dwFlags, uintptr_t dwExtraInfo)');
+    winUser32Instance = { mouse_event, keybd_event };
+    return winUser32Instance;
+  } catch (err) {
+    console.warn('[WindowsProviders] Win32 FFI user32.dll input binding unavailable:', err);
+    winUser32Instance = null;
+    return null;
+  }
+}
+
+export const WIN_VK_MAP: Record<string, { vk: number; extended?: boolean }> = {
+  pageup: { vk: 0x21, extended: true }, // VK_PRIOR
+  pagedown: { vk: 0x22, extended: true }, // VK_NEXT
+  end: { vk: 0x23, extended: true }, // VK_END
+  home: { vk: 0x24, extended: true }, // VK_HOME
+  left: { vk: 0x25, extended: true }, // VK_LEFT
+  up: { vk: 0x26, extended: true }, // VK_UP
+  right: { vk: 0x27, extended: true }, // VK_RIGHT
+  down: { vk: 0x28, extended: true }, // VK_DOWN
+  insert: { vk: 0x2D, extended: true }, // VK_INSERT
+  delete: { vk: 0x2E, extended: true }, // VK_DELETE
+  backspace: { vk: 0x08 }, // VK_BACK
+  tab: { vk: 0x09 }, // VK_TAB
+  enter: { vk: 0x0D }, // VK_RETURN
+  return: { vk: 0x0D },
+  escape: { vk: 0x1B }, // VK_ESCAPE
+  space: { vk: 0x20 }, // VK_SPACE
+  capslock: { vk: 0x14 }, // VK_CAPITAL
+  printscreen: { vk: 0x2C, extended: true }, // VK_SNAPSHOT
+  control: { vk: 0x11 }, // VK_CONTROL
+  ctrl: { vk: 0x11 },
+  shift: { vk: 0x10 }, // VK_SHIFT
+  alt: { vk: 0x12 }, // VK_MENU
+  win: { vk: 0x5B, extended: true }, // VK_LWIN
+  command: { vk: 0x5B, extended: true },
+};
+
+// Seed letters a-z, numbers 0-9, function keys f1-f12
+for (let i = 0; i < 26; i++) {
+  const char = String.fromCharCode(97 + i);
+  WIN_VK_MAP[char] = { vk: 0x41 + i };
+}
+for (let i = 0; i < 10; i++) {
+  WIN_VK_MAP[String(i)] = { vk: 0x30 + i };
+}
+for (let i = 1; i <= 12; i++) {
+  WIN_VK_MAP[`f${i}`] = { vk: 0x70 + i - 1 };
+}
+
+// ---------------------------------------------------------------------------
 // Linux backend probes (xdotool for input, scrot for screen capture)
 // ---------------------------------------------------------------------------
 
@@ -428,7 +499,24 @@ export class RobotJsInputController implements InputController {
 
   public async press(key: string): Promise<void> {
     this.beginScreenObservation();
+    const cleanKey = key.trim().toLowerCase();
     if (process.platform === 'win32') {
+      const isDefaultProvider = this.robotProvider === loadRobot;
+      if (isDefaultProvider) {
+        const user32 = loadWinUser32();
+        const vkEntry = WIN_VK_MAP[cleanKey];
+        if (user32 && vkEntry) {
+          try {
+            const extFlag = vkEntry.extended ? 0x0001 /* KEYEVENTF_EXTENDEDKEY */ : 0;
+            user32.keybd_event(vkEntry.vk, 0, extFlag, 0);
+            user32.keybd_event(vkEntry.vk, 0, extFlag | 0x0002 /* KEYEVENTF_KEYUP */, 0);
+            return;
+          } catch (ffiErr) {
+            console.warn('[WindowsProviders] keybd_event FFI failed, falling back to robotjs:', ffiErr);
+          }
+        }
+      }
+
       const robot = this.robotProvider();
       const native = nativeKey(key);
       try {
@@ -482,9 +570,34 @@ export class RobotJsInputController implements InputController {
   public async hotkey(keys: string[]): Promise<void> {
     if (keys.length < 2) throw new ActionError(ACTION_ERROR_CODES.INVALID_ARGUMENT, 'A hotkey requires at least two keys.');
     this.beginScreenObservation();
-    const normalized = keys.map(nativeKey);
     if (process.platform === 'win32') {
-      const robot = loadRobot();
+      const isDefaultProvider = this.robotProvider === loadRobot;
+      if (isDefaultProvider) {
+        const user32 = loadWinUser32();
+        const entries = keys.map((k) => WIN_VK_MAP[k.trim().toLowerCase()]);
+        if (user32 && entries.every(Boolean)) {
+          try {
+            // Key downs in order
+            for (const e of entries) {
+              const extFlag = e.extended ? 0x0001 : 0;
+              user32.keybd_event(e.vk, 0, extFlag, 0);
+            }
+            await new Promise((r) => setTimeout(r, 20));
+            // Key ups in reverse order
+            for (let i = entries.length - 1; i >= 0; i--) {
+              const e = entries[i];
+              const extFlag = e.extended ? 0x0001 : 0;
+              user32.keybd_event(e.vk, 0, extFlag | 0x0002, 0);
+            }
+            return;
+          } catch (ffiErr) {
+            console.warn('[WindowsProviders] hotkey FFI failed, falling back to robotjs:', ffiErr);
+          }
+        }
+      }
+
+      const normalized = keys.map(nativeKey);
+      const robot = this.robotProvider();
       try {
         const modifiers = normalized.slice(0, -1);
         robot.keyTap(normalized[normalized.length - 1], modifiers);
@@ -500,6 +613,7 @@ export class RobotJsInputController implements InputController {
       }
       // xdotool key takes a single keysym argument with optional + separators
       // (e.g. "ctrl+shift+c"). We join all keys with "+".
+      const normalized = keys.map(nativeKey);
       try {
         await execFileAsync('xdotool', ['key', '--clearmodifiers', normalized.join('+')], {
           windowsHide: true,
@@ -516,7 +630,7 @@ export class RobotJsInputController implements InputController {
   public async click(button: 'left' | 'middle' | 'right', clicks: number, x?: number, y?: number): Promise<void> {
     this.beginScreenObservation();
     if (process.platform === 'win32') {
-      const robot = loadRobot();
+      const robot = this.robotProvider();
       if (x !== undefined && y !== undefined) {
         await this.validateCoordinates(x, y);
         robot.moveMouse(x, y);
@@ -561,7 +675,7 @@ export class RobotJsInputController implements InputController {
   public async move(x: number, y: number): Promise<void> {
     await this.validateCoordinates(x, y);
     if (process.platform === 'win32') {
-      const robot = loadRobot();
+      const robot = this.robotProvider();
       try { robot.moveMouse(x, y); } catch (error) { throw new ActionError(ACTION_ERROR_CODES.INPUT_EXECUTION_FAILED, 'Windows rejected the cursor movement.', error); }
       return;
     }
@@ -585,8 +699,47 @@ export class RobotJsInputController implements InputController {
   public async scroll(delta: number): Promise<void> {
     this.beginScreenObservation();
     if (process.platform === 'win32') {
-      const robot = loadRobot();
-      try { robot.scrollMouse(0, Math.trunc(delta)); } catch (error) { throw new ActionError(ACTION_ERROR_CODES.INPUT_EXECUTION_FAILED, 'Windows rejected the scroll operation.', error); }
+      // Windows wheel scrolling: 1 standard mouse wheel notch = WHEEL_DELTA (120).
+      // In Windows API mouse_event:
+      // positive dwData = scroll UP (away from user)
+      // negative dwData = scroll DOWN (toward user)
+      // Normalize notch count into wheel units:
+      const rawDelta = Math.trunc(delta);
+      const wheelUnits = Math.abs(rawDelta) < 60 ? rawDelta * 120 : rawDelta;
+
+      const isDefaultProvider = this.robotProvider === loadRobot;
+      if (isDefaultProvider) {
+        const user32 = loadWinUser32();
+        if (user32) {
+          try {
+            // MOUSEEVENTF_WHEEL = 0x0800
+            // Cast signed 32-bit wheelUnits to uint32 bit pattern (>>> 0)
+            user32.mouse_event(0x0800, 0, 0, wheelUnits >>> 0, 0);
+            return;
+          } catch (ffiErr) {
+            console.warn('[WindowsProviders] mouse_event FFI failed, falling back to robotjs:', ffiErr);
+          }
+        }
+      }
+
+      // RobotJS fallback or injected mock
+      let robot: RobotApi | null = null;
+      try {
+        robot = this.robotProvider();
+      } catch {
+        robot = null;
+      }
+      if (robot && typeof robot.scrollMouse === 'function') {
+        try {
+          robot.scrollMouse(0, wheelUnits);
+          return;
+        } catch (err) {
+          throw new ActionError(ACTION_ERROR_CODES.INPUT_EXECUTION_FAILED, 'Windows rejected the scroll operation.', err);
+        }
+      }
+      if (!isDefaultProvider && (!robot || typeof robot.scrollMouse !== 'function')) {
+        throw new ActionError(ACTION_ERROR_CODES.INPUT_EXECUTION_FAILED, 'Injected robot provider does not support scrollMouse.');
+      }
       return;
     }
     if (process.platform === 'linux') {

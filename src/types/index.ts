@@ -14,7 +14,7 @@ declare global {
       showNotification?: (title: string, body: string) => Promise<void>;
       minimizeToTray?: () => Promise<void>;
       onTrayAction?: (listener: (action: string) => void) => () => void;
-      onLocalSpeechTranscript: (listener: (payload: { text?: string; confidence?: number; mainTranscriptCount?: number; preloadTranscriptCount?: number }) => void) => () => void;
+      onLocalSpeechTranscript: (listener: (payload: { text?: string; confidence?: number; isHypothesis?: boolean | string; isPartial?: boolean; mainTranscriptCount?: number; preloadTranscriptCount?: number }) => void) => () => void;
       onLocalSpeechStatus: (listener: (payload: { status?: string; message?: string }) => void) => () => void;
       onLocalSpeechError: (listener: (payload: { message?: string }) => void) => () => void;
       onLocalSpeechDiagnostic: (listener: (payload: { type?: string; event?: string; name?: string; level?: number; signal?: boolean | string; state?: string; message?: string }) => void) => () => void;

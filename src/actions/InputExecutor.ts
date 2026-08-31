@@ -117,9 +117,21 @@ export class InputExecutor implements ActionExecutor {
           await this.controller.move(x, y);
           execution = { result: { operation: 'move', x, y } }; break;
         }
-      case 'input.scroll':
-        await this.controller.scroll(this.requireNumber(parameters.delta, 'delta'));
-        execution = { result: { operation: 'scroll', delta: parameters.delta } }; break;
+      case 'input.scroll': {
+        let delta = typeof parameters.delta === 'number' && Number.isFinite(parameters.delta) ? parameters.delta : undefined;
+        if (delta === undefined) {
+          const dir = String(parameters.direction || '').toLowerCase();
+          if (dir === 'up') delta = 3;
+          else if (dir === 'down') delta = -3;
+          else if (parameters.amount !== undefined && Number.isFinite(Number(parameters.amount))) {
+            delta = Number(parameters.amount);
+          } else {
+            delta = this.requireNumber(parameters.delta, 'delta');
+          }
+        }
+        await this.controller.scroll(delta);
+        execution = { result: { operation: 'scroll', delta } }; break;
+      }
       case 'input.drag': {
         const fromX = this.requireNumber(parameters.fromX, 'fromX');
         const fromY = this.requireNumber(parameters.fromY, 'fromY');

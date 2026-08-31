@@ -61,6 +61,8 @@ asar: true
 # rebuild fails on the build machine, SERA degrades gracefully to the koffi
 # SendInput fallback that already ships in WindowsProviders).
 asarUnpack:
+  - electron/local-speech.ps1
+  - electron/speech-host.cjs
   - node_modules/robotjs/**
   - node_modules/active-win/**
   - node_modules/koffi/**
