@@ -1133,13 +1133,6 @@ export function createActiveWindowDetectableCheck(): IDiagnosticCheckRunner {
 
         // Check Windows native fallback
         if (process.platform === 'win32') {
-          try {
-            const { WindowsProviders } = await import('../actions/WindowsProviders');
-            const win = WindowsProviders.getForegroundWindowInfo();
-            if (win && win.title) {
-              return pass(base, `Active window detected (Win32): "${win.title}".`, { title: win.title, pid: win.pid });
-            }
-          } catch {}
           return pass(base, 'Active window detection ready via Windows Win32 API.');
         }
 
