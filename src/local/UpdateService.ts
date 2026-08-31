@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs';
+import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import https from 'node:https';
@@ -193,6 +193,26 @@ export class UpdateService {
       };
 
       if (hasNewer && this.info.downloadUrl) {
+        const targetDir = tmpWorkDir();
+        const fileName = this.info.assetName || `Sera-Update-${rawVersion}.exe`;
+        const targetPath = path.join(targetDir, fileName);
+
+        if (fs.existsSync(targetPath)) {
+          const verifyResult = await this.verifyPackage(targetPath, this.info.assetSize || undefined, this.info.sha256 || undefined);
+          if (verifyResult.valid) {
+            this.downloadedFilePath = targetPath;
+            this.downloadedFileSha256 = verifyResult.sha256 || null;
+            this.status = 'ready-to-install';
+            this.progress = {
+              bytesDownloaded: this.info.assetSize || fs.statSync(targetPath).size,
+              totalBytes: this.info.assetSize || fs.statSync(targetPath).size,
+              percent: 100,
+              speedBytesPerSec: 0,
+              etaSeconds: 0,
+            };
+            return this.info;
+          }
+        }
         this.status = 'update-available';
       } else {
         this.status = 'up-to-date';
@@ -230,6 +250,34 @@ export class UpdateService {
       return { success: false, error: this.errorMessage };
     }
 
+    const targetDir = tmpWorkDir();
+    fs.mkdirSync(targetDir, { recursive: true });
+    const fileName = this.info.assetName || `Sera-Update-${this.info.latestVersion || Date.now()}.exe`;
+    const targetPath = path.join(targetDir, fileName);
+
+    // If already verified and ready to install, do not download again
+    if (this.status === 'ready-to-install' && this.downloadedFilePath && fs.existsSync(this.downloadedFilePath)) {
+      return { success: true, filePath: this.downloadedFilePath };
+    }
+
+    // Check if target file is already cached and valid on disk
+    if (fs.existsSync(targetPath)) {
+      const verifyResult = await this.verifyPackage(targetPath, this.info.assetSize || undefined, this.info.sha256 || undefined);
+      if (verifyResult.valid) {
+        this.downloadedFilePath = targetPath;
+        this.downloadedFileSha256 = verifyResult.sha256 || null;
+        this.status = 'ready-to-install';
+        this.progress = {
+          bytesDownloaded: this.info.assetSize || fs.statSync(targetPath).size,
+          totalBytes: this.info.assetSize || fs.statSync(targetPath).size,
+          percent: 100,
+          speedBytesPerSec: 0,
+          etaSeconds: 0,
+        };
+        return { success: true, filePath: targetPath };
+      }
+    }
+
     if (this.status === 'downloading') {
       return { success: true, filePath: this.downloadedFilePath || undefined };
     }
@@ -244,10 +292,6 @@ export class UpdateService {
       etaSeconds: null,
     };
 
-    const targetDir = tmpWorkDir();
-    fs.mkdirSync(targetDir, { recursive: true });
-    const fileName = this.info.assetName || `Sera-Update-${this.info.latestVersion || Date.now()}.exe`;
-    const targetPath = path.join(targetDir, fileName);
     const tempDownloadPath = `${targetPath}.downloading`;
 
     try {
@@ -271,6 +315,13 @@ export class UpdateService {
       this.downloadedFilePath = targetPath;
       this.downloadedFileSha256 = verifyResult.sha256 || null;
       this.status = 'ready-to-install';
+      this.progress = {
+        bytesDownloaded: this.info.assetSize || (fs.existsSync(targetPath) ? fs.statSync(targetPath).size : 0),
+        totalBytes: this.info.assetSize || (fs.existsSync(targetPath) ? fs.statSync(targetPath).size : 0),
+        percent: 100,
+        speedBytesPerSec: 0,
+        etaSeconds: 0,
+      };
       return { success: true, filePath: targetPath };
     } catch (err: any) {
       console.error('[UPDATE_DOWNLOAD_FAILED]', err);

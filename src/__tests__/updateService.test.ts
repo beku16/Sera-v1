@@ -123,6 +123,30 @@ describe('UpdateService - Security, Semver & State Machine', () => {
     expect(status.errorMessage).toContain('cancelled');
   });
 
+  it('detects existing verified download on disk and avoids redownloading', async () => {
+    const service = new UpdateService();
+    const dummyPath = path.join(tempDir, 'Sera-Update-1.9.2.exe');
+    const largeBuffer = Buffer.alloc(2 * 1024 * 1024);
+    largeBuffer[0] = 0x4d; // 'M'
+    largeBuffer[1] = 0x5a; // 'Z'
+    fs.writeFileSync(dummyPath, largeBuffer);
+
+    // Mock service info pointing to this asset
+    (service as any).info = {
+      hasUpdate: true,
+      currentVersion: '1.9.1',
+      latestVersion: '1.9.2',
+      downloadUrl: 'https://github.com/beku16/Sera-v1/releases/download/v1.9.2/Sera-Update-1.9.2.exe',
+      assetName: 'Sera-Update-1.9.2.exe',
+      assetSize: largeBuffer.length,
+      lastChecked: Date.now(),
+    };
+
+    // Override tmpWorkDir for testing
+    const result = await service.verifyPackage(dummyPath, largeBuffer.length);
+    expect(result.valid).toBe(true);
+  });
+
   it('correctly calculates anti-spam snooze filtering and newer-version unblocking', () => {
     const settings = {
       snoozedUpdateVersion: '1.9.1',

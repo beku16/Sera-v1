@@ -2,6 +2,7 @@ import React from 'react';
 import { Sparkles, Download, ArrowRight, X, Clock, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { UpdateState, ColorPaletteId } from '../../types';
 import { getPaletteConfig } from '../../config/palettes';
+import { APP_VERSION } from '../../generated/appVersion';
 
 interface UpdateNotificationToastProps {
   isVisible: boolean;
@@ -37,8 +38,8 @@ export const UpdateNotificationToast: React.FC<UpdateNotificationToastProps> = (
   if (!isVisible || !updateState.info.hasUpdate) return null;
 
   const palette = getPaletteConfig(paletteId, customColor);
-  const currentVersion = updateState.info.currentVersion || '1.9.0';
-  const latestVersion = updateState.info.latestVersion || '1.9.1';
+  const currentVersion = updateState.info.currentVersion || APP_VERSION;
+  const latestVersion = updateState.info.latestVersion || 'new version';
   const isDownloading = updateState.status === 'downloading';
   const isReady = updateState.status === 'ready-to-install';
   const isError = updateState.status === 'error';

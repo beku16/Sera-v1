@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { UpdateState, UpdateStatus, AssistantSettings } from '../types';
 import { APP_VERSION } from '../generated/appVersion';
 
@@ -80,7 +80,13 @@ export function useUpdater({ settings, onUpdateSettings }: UseUpdaterOptions) {
 
             // Auto-download policy if configured
             if (settings.updateBehavior === 'auto_download' && data.status === 'update-available') {
-              void fetch('/api/update/download', { method: 'POST' });
+              setUpdateState((prev) => ({ ...prev, status: 'downloading' }));
+              void fetch('/api/update/download', { method: 'POST' }).then(async (res) => {
+                if (res.ok) {
+                  const d = await res.json();
+                  if (d.status) setUpdateState(d.status);
+                }
+              });
             }
           }
           return data;
@@ -104,7 +110,12 @@ export function useUpdater({ settings, onUpdateSettings }: UseUpdaterOptions) {
       const res = await fetch('/api/update/download', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        if (data.status) setUpdateState(data.status);
+        if (data.status) {
+          setUpdateState(data.status);
+          if (data.status.status === 'ready-to-install') {
+            setIsNotificationVisible(true);
+          }
+        }
       }
     } catch (err: any) {
       setUpdateState((prev) => ({
@@ -177,13 +188,21 @@ export function useUpdater({ settings, onUpdateSettings }: UseUpdaterOptions) {
     return () => clearTimeout(startupTimer);
   }, [check]);
 
-  // Polling loop while downloading
+  // Polling loop while downloading, verifying, or installing
   useEffect(() => {
-    if (updateState.status === 'downloading') {
+    const isActivelyUpdating =
+      updateState.status === 'downloading' ||
+      updateState.status === 'verifying' ||
+      updateState.status === 'installing';
+
+    if (isActivelyUpdating) {
       if (!pollTimerRef.current) {
-        pollTimerRef.current = setInterval(() => {
-          void fetchStatus();
-        }, 350);
+        pollTimerRef.current = setInterval(async () => {
+          const fresh = await fetchStatus();
+          if (fresh && fresh.status === 'ready-to-install') {
+            setIsNotificationVisible(true);
+          }
+        }, 400);
       }
     } else {
       if (pollTimerRef.current) {

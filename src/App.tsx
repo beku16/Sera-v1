@@ -470,7 +470,13 @@ export default function App() {
         updateState={updateState}
         paletteId={settings.palette}
         customColor={settings.customColor}
-        onUpdateNow={downloadUpdate}
+        onUpdateNow={() => {
+          if (updateState.status === 'ready-to-install') {
+            void installUpdateAndRestart();
+          } else {
+            void downloadUpdate();
+          }
+        }}
         onViewDetails={() => {
           dismissNotification(0);
           setSettingsTab('updates');

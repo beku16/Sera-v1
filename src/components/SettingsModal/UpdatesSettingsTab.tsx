@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Download,
   RefreshCw,
@@ -44,6 +44,11 @@ export const UpdatesSettingsTab: React.FC<UpdatesSettingsTabProps> = ({
   const isReady = status === 'ready-to-install';
   const isInstalling = status === 'installing' || status === 'restarting';
   const isUpToDate = status === 'up-to-date' || (!info.hasUpdate && status !== 'error' && status !== 'checking');
+
+  // Auto-sync status on mount
+  useEffect(() => {
+    void onCheckForUpdates();
+  }, [onCheckForUpdates]);
 
   const handleCheck = async () => {
     setChecking(true);
@@ -290,18 +295,32 @@ export const UpdatesSettingsTab: React.FC<UpdatesSettingsTabProps> = ({
           <button
             type="button"
             onClick={handleUpdateClick}
-            disabled={isDownloading || isInstalling}
-            className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-mono text-xs font-black tracking-wider text-white shadow-lg shadow-cyan-500/25 transition hover:scale-105 active:scale-95 disabled:opacity-50"
+            disabled={isDownloading || isVerifying || isInstalling}
+            className={`flex items-center gap-2 rounded-2xl px-6 py-3 font-mono text-xs font-black tracking-wider text-white shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-60 ${
+              isReady
+                ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 shadow-emerald-500/30 animate-pulse text-emerald-950 font-black'
+                : 'bg-gradient-to-r from-cyan-500 to-blue-600 shadow-cyan-500/25'
+            }`}
           >
             {isInstalling ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>RESTARTING SERA...</span>
+                <span>RESTARTING SERA TO APPLY UPDATE...</span>
+              </>
+            ) : isVerifying ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>VERIFYING PACKAGE INTEGRITY...</span>
+              </>
+            ) : isDownloading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>DOWNLOADING ({progress.percent}%)...</span>
               </>
             ) : isReady ? (
               <>
                 <RefreshCw className="h-4 w-4" />
-                <span>RESTART & APPLY UPDATE</span>
+                <span>RESTART & APPLY UPDATE NOW</span>
               </>
             ) : (
               <>
