@@ -432,41 +432,41 @@ function sharingStatus(share: UseScreenShareResult): { label: string; color: str
     const ocrChars = share.channelState?.ocrChars ?? 0;
     if (ocrChars > 0) {
       return {
-        label: `LOCAL · TEXT VISION (OCR ${ocrChars}c)`,
+        label: `VISION: LOCAL · OCR (${ocrChars} chars)`,
         color: '#38bdf8',
-        hint: 'Local mode cannot see images, but SERA reads the visible TEXT on your screen via OCR — ask "read the visible text" or "what does this error say". Full image vision needs Online Mode.',
+        hint: 'Local-first vision is active. SERA extracts visible screen text locally via OCR and executes computer control offline.',
       };
     }
     return {
-      label: 'VISION OFFLINE · ONLINE MODE ONLY',
-      color: '#fbbf24',
-      hint: 'Screen vision uses Gemini — flip to Online Mode in the header to let SERA see your screen. Local mode keeps the preview only.',
+      label: 'VISION: LOCAL · SCREEN ACTIVE',
+      color: '#38bdf8',
+      hint: 'Local-first screen capture active. Local models process OCR and safe system control locally.',
     };
   }
   if (!share.visionMode) {
     return {
-      label: 'PREVIEW ONLY · VISION OFF',
+      label: 'VISION: LOCAL-FIRST · ON-DEMAND',
       color: '#94a3b8',
-      hint: 'Frames stay on your device. SERA looks only when you ask about the screen.',
+      hint: 'Frames stay on your device. SERA analyzes visual context only when you ask a screen question.',
     };
   }
   if (share.phase === 'paused') {
     return {
-      label: 'PAUSED · SERA CANNOT SEE',
+      label: 'SCREEN SHARING: PAUSED',
       color: '#fbbf24',
-      hint: 'Frame feed is paused — resume to give SERA eyes again.',
+      hint: 'Frame feed is paused — click Resume to restore active visual analysis.',
     };
   }
   if (share.streaming) {
     return {
-      label: 'STREAMING TO SERA',
-      color: '#f87171',
-      hint: 'Frames are reaching SERA live — ask her anything about your screen.',
+      label: 'VISION: LOCAL-FIRST · ONLINE REASONING AVAILABLE',
+      color: '#34d399',
+      hint: 'Local capture is active with change detection. Useful visual context is streamed to online reasoning when needed.',
     };
   }
   return {
-    label: 'VISION STANDBY · BUFFERING',
+    label: 'VISION: LOCAL-FIRST · STANDBY',
     color: '#38bdf8',
-    hint: 'Frames buffer locally and stream the moment a SERA session starts.',
+    hint: 'Local capture active. Frames buffer locally and stream when a reasoning session connects.',
   };
 }

@@ -94,6 +94,7 @@ nsis:
   createDesktopShortcut: true
   shortcutName: Sera
   deleteAppDataOnUninstall: false
+  include: build/uninstaller.nsh
   artifactName: Sera.Installer.${ext}
 
 portable:

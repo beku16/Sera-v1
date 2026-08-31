@@ -439,6 +439,11 @@ app.post('/api/uninstall/execute', heavyApiLimiter, async (req, res) => {
       preserveEngines: !isFullWipe && preserveEngines === true,
     });
     res.json(result);
+
+    // Coordinate graceful shutdown of active workers and databases
+    setTimeout(() => {
+      void shutdownCoordinator.shutdown('uninstall').catch(() => {});
+    }, 500);
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }

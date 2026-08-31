@@ -59,8 +59,13 @@ describe('UninstallService & Intent Recognition', () => {
   it('recognizes voice and text uninstallation intents', () => {
     expect(matchUninstallIntent('Sera, uninstall yourself')).toBe(true);
     expect(matchUninstallIntent('uninstall sera')).toBe(true);
-    expect(matchUninstallIntent('delete sera')).toBe(true);
+    expect(matchUninstallIntent('uninstall yourself')).toBe(true);
     expect(matchUninstallIntent('remove sera')).toBe(true);
+    expect(matchUninstallIntent('i want to uninstall sera')).toBe(true);
+    expect(matchUninstallIntent('remove sera from my computer')).toBe(true);
+    expect(matchUninstallIntent('delete sera from my computer')).toBe(true);
+    expect(matchUninstallIntent('delete sera')).toBe(true);
+    expect(matchUninstallIntent('remove yourself')).toBe(true);
     expect(matchUninstallIntent('erase sera')).toBe(true);
     expect(matchUninstallIntent('wipe sera')).toBe(true);
     expect(matchUninstallIntent('uninstall')).toBe(true);

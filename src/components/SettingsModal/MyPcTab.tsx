@@ -226,27 +226,6 @@ export const MyPcTab: React.FC<MyPcTabProps> = ({ settings, onUpdateSettings, on
   return (
     <div className="space-y-5 animate-fade-up">
 
-      {/* ── System Maintenance & Uninstall ───────────────────── */}
-      {onOpenUninstall && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-red-500/30 bg-red-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-0.5">
-            <span className="inline-flex items-center gap-2 font-mono text-xs font-bold text-red-400">
-              <Trash2 className="h-4 w-4" /> UNINSTALL SERA
-            </span>
-            <p className="font-mono text-[10px] text-graphite">
-              Self-uninstall wizard: cleanly remove SERA with options to backup or wipe memories and keys.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onOpenUninstall}
-            className="self-start sm:self-auto shrink-0 rounded-xl border border-red-500/40 bg-red-500/15 px-3.5 py-2 font-mono text-[10px] font-bold text-red-400 transition hover:bg-red-500/25 active:scale-95"
-          >
-            UNINSTALL SERA...
-          </button>
-        </div>
-      )}
-
       {/* ── Hardware audit ─────────────────────────────────── */}
       <div className="space-y-3 rounded-2xl border border-line bg-paper p-4 shadow-sm">
         <div className="flex items-center justify-between">
@@ -604,23 +583,6 @@ export const MyPcTab: React.FC<MyPcTabProps> = ({ settings, onUpdateSettings, on
                 className="shrink-0 rounded-lg border border-line bg-paper px-2.5 py-1.5 font-mono text-[9px] font-bold text-graphite transition hover:text-ink"
               >
                 OPEN LOG FOLDER
-              </button>
-            </div>
-
-            {/* ── UNINSTALL & DATA MANAGEMENT DANGER ZONE ── */}
-            <div className="flex items-center justify-between gap-2 rounded-xl border border-red-500/30 bg-red-500/[0.04] p-3">
-              <div className="min-w-0">
-                <span className="block font-sans text-xs font-bold text-red-300">Uninstall SERA & Data Management</span>
-                <span className="block font-mono text-[9px] leading-relaxed text-graphite">
-                  Launch the secure uninstallation wizard with options to preserve your memories for future reinstall or perform a 100% clean wipe.
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={onOpenUninstall}
-                className="shrink-0 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 font-mono text-[9px] font-bold text-red-300 transition hover:bg-red-500/20 active:scale-95"
-              >
-                UNINSTALL SERA
               </button>
             </div>
           </>

@@ -155,6 +155,10 @@ const UNINSTALL_SUBSTRINGS: string[] = [
   'uninstall yourself',
   'uninstall sera',
   'uninstall sara',
+  'i want to uninstall sera',
+  'i want to uninstall',
+  'remove sera from my computer',
+  'delete sera from my computer',
   'delete yourself',
   'delete sera',
   'delete sara',
@@ -170,9 +174,11 @@ const UNINSTALL_SUBSTRINGS: string[] = [
 const UNINSTALL_EXACT: ReadonlySet<string> = new Set([
   'uninstall',
   'uninstall sera',
+  'uninstall sara',
   'uninstall yourself',
   'delete sera',
   'remove sera',
+  'remove yourself',
   'self destruct',
 ]);
 
