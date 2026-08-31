@@ -334,10 +334,12 @@ app.post('/api/diagnostics/scan', heavyApiLimiter, async (req, res) => {
     // deep=true — this endpoint is the user's explicit "Run Full Scan"
     // button. Background sweeps (SystemHealthMonitor / health endpoint)
     // run read-only so the user's clip history is never polluted.
-    const report = await defaultSystemDiagnosticService.runFullScan({ deep: true });
+    let report = await defaultSystemDiagnosticService.runFullScan({ deep: true });
     let repairResults = [];
     if (autoRepair) {
       repairResults = await defaultSystemDiagnosticService.autoRepairReport(report);
+      // Re-scan so returned report reflects the newly repaired state
+      report = await defaultSystemDiagnosticService.runFullScan({ deep: true });
     }
     res.json({ report, repairResults });
   } catch (error) {

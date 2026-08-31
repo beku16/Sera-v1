@@ -965,11 +965,14 @@ ipcMain.handle('local-speech-start', () => {
     }
   });
   worker.stderr.on('data', (chunk) => console.error('[SPEECH_WORKER_STDERR]', String(chunk).trim()));
-  worker.on('exit', (code) => {
-    localSpeechState = code === 0 ? 'STOPPED' : 'ERROR';
+  worker.on('exit', (code, signal) => {
+    const isCleanExit = code === 0 || worker.killed || signal === 'SIGTERM' || signal === 'SIGINT';
+    localSpeechState = isCleanExit ? 'STOPPED' : 'ERROR';
     localSpeechExitCode = code;
-    console.log(`[SPEECH_WORKER_EXIT] pid=${worker.pid} code=${code ?? 'unknown'} signal=${worker.signalCode || 'none'} killed=${worker.killed}`);
-    if (code && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-speech-error', { message: `Local speech process exited with code ${code}.` });
+    console.log(`[SPEECH_WORKER_EXIT] pid=${worker.pid} code=${code ?? 'unknown'} signal=${signal || worker.signalCode || 'none'} killed=${worker.killed} isCleanExit=${isCleanExit}`);
+    if (!worker.killed && code !== 0 && code !== null && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('local-speech-error', { message: `Local speech process stopped (exit code ${code}).` });
+    }
     if (localSpeech === worker) {
       localSpeech = null;
       localSpeechStartPromise = null;

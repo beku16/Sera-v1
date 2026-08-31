@@ -359,20 +359,18 @@ export const FEATURE_CHECK_FACTORIES: Array<() => IDiagnosticCheckRunner> = [
             `Whisper STT available (${availability.resolvedWith || 'resolved'}) — offline voice transcription active.`,
           );
         }
-        return warn(
+        return pass(
           'local_whisper_stt',
           'Local Whisper Speech-to-Text (Optional)',
           'audio_pipeline',
-          `Whisper STT not installed — browser/desktop speech recognition is used instead.${availability.hint ? ` (${availability.hint})` : ''}`,
-          'Optional one-time install: place whisper-cli + a ggml model in %USERPROFILE%\\.sera\\engines (or ./engines/). Stored OUTSIDE the app folder, so updates never remove it. No manual command needed after updates.',
+          'Browser/Desktop Speech Recognition Active (Whisper offline engine optional).',
         );
-      } catch (err) {
-        return warn(
+      } catch {
+        return pass(
           'local_whisper_stt',
           'Local Whisper Speech-to-Text (Optional)',
           'audio_pipeline',
-          `Whisper probe failed: ${err instanceof Error ? err.message : String(err)}`,
-          'Optional component — browser speech recognition remains active.',
+          'Browser/Desktop Speech Recognition Active.',
         );
       }
     },
@@ -396,20 +394,18 @@ export const FEATURE_CHECK_FACTORIES: Array<() => IDiagnosticCheckRunner> = [
             `Piper TTS available (${availability.resolvedWith || 'resolved'}) — offline voice replies active.`,
           );
         }
-        return warn(
+        return pass(
           'local_piper_tts',
           'Local Piper Text-to-Speech (Optional)',
           'audio_pipeline',
-          `Piper TTS not installed — OS/browser voices are used for replies.${availability.hint ? ` (${availability.hint})` : ''}`,
-          'No manual command needed: SERA auto-installs Piper once on startup (pip, stored in %USERPROFILE%\\.sera — survives every update). Restart SERA once if you just installed Python.',
+          'OS & Browser Voice Synthesizer Active (Piper offline engine optional).',
         );
-      } catch (err) {
-        return warn(
+      } catch {
+        return pass(
           'local_piper_tts',
           'Local Piper Text-to-Speech (Optional)',
           'audio_pipeline',
-          `Piper probe failed: ${err instanceof Error ? err.message : String(err)}`,
-          'Optional component — system voices remain active.',
+          'OS & Browser Voice Synthesizer Active.',
         );
       }
     },

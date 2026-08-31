@@ -56,6 +56,29 @@ function formatNumber(value: number | undefined, suffix = ''): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 10) / 10}${suffix}` : '—';
 }
 
+interface AutoFixStepResult {
+  checkId: string;
+  name: string;
+  success: boolean;
+  message: string;
+  actionsTaken?: string[];
+  error?: string;
+}
+
+interface AutoFixProgressState {
+  isActive: boolean;
+  total: number;
+  currentStep: number;
+  currentCheckName: string | null;
+  currentCheckId: string | null;
+  percent: number;
+  completedCount: number;
+  failedCount: number;
+  results: AutoFixStepResult[];
+  finished: boolean;
+  finalStatus: 'all_passed' | 'partial' | 'failed' | null;
+}
+
 export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = React.memo(({
   isOpen,
   onClose,
@@ -72,6 +95,21 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = React.memo(({
   const [isSimulating, setIsSimulating] = useState(false);
   const [statusNotification, setStatusNotification] = useState<string | null>(null);
   const [repairLogs, setRepairLogs] = useState<string[]>([]);
+  const [activeFixingId, setActiveFixingId] = useState<string | null>(null);
+
+  const [fixProgress, setFixProgress] = useState<AutoFixProgressState>({
+    isActive: false,
+    total: 0,
+    currentStep: 0,
+    currentCheckName: null,
+    currentCheckId: null,
+    percent: 0,
+    completedCount: 0,
+    failedCount: 0,
+    results: [],
+    finished: false,
+    finalStatus: null,
+  });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -90,37 +128,152 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = React.memo(({
   }, [isOpen]);
 
   const runScan = async (autoRepair = false) => {
-    if (autoRepair) setIsRepairing(true);
-    else setIsScanning(true);
+    if (autoRepair) {
+      await handleAutoFixAll();
+      return;
+    }
 
+    setIsScanning(true);
     try {
       const res = await fetch('/api/diagnostics/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ autoRepair }),
+        body: JSON.stringify({ autoRepair: false }),
       });
       if (res.ok) {
         const data = await res.json();
         setScanReport(data.report);
         const passedCount = data.report.checks.filter((c: any) => c.status === 'passed').length;
-        setStatusNotification(
-          autoRepair
-            ? `✓ Auto-repair finished: ${passedCount}/${data.report.checks.length} subsystems healthy.`
-            : `✓ Deep scan finished: ${passedCount}/${data.report.checks.length} subsystems operating nominally.`
-        );
-
-        if (data.repairResults && data.repairResults.length > 0) {
-          const logs = data.repairResults.map((r: any) => `${r.message} (${r.actionsTaken?.join(', ') || 'OK'})`);
-          setRepairLogs(logs);
-        }
+        setStatusNotification(`✓ Deep scan finished: ${passedCount}/${data.report.checks.length} subsystems operating nominally.`);
       }
     } catch (err) {
       console.error('Failed to run diagnostic scan:', err);
       setStatusNotification('Failed to communicate with diagnostic service.');
     } finally {
       setIsScanning(false);
-      setIsRepairing(false);
     }
+  };
+
+  const handleAutoFixAll = async () => {
+    if (isScanning || isRepairing || isSimulating || fixProgress.isActive) return;
+
+    const nonPassed = scanReport?.checks.filter((c) => c.status !== 'passed') || [];
+    const fixable = nonPassed.filter((c) => c.autoFixAvailable);
+
+    if (fixable.length === 0) {
+      setStatusNotification('ℹ️ No automatic fixes available. All remaining items require manual configuration.');
+      return;
+    }
+
+    setIsRepairing(true);
+    setFixProgress({
+      isActive: true,
+      total: fixable.length,
+      currentStep: 0,
+      currentCheckName: fixable[0].name,
+      currentCheckId: fixable[0].checkId,
+      percent: 0,
+      completedCount: 0,
+      failedCount: 0,
+      results: [],
+      finished: false,
+      finalStatus: null,
+    });
+
+    const stepResults: AutoFixStepResult[] = [];
+    let completed = 0;
+    let failed = 0;
+
+    for (let i = 0; i < fixable.length; i++) {
+      const check = fixable[i];
+      setActiveFixingId(check.checkId);
+      setFixProgress((prev) => ({
+        ...prev,
+        currentStep: i + 1,
+        currentCheckName: check.name,
+        currentCheckId: check.checkId,
+        percent: Math.round((i / fixable.length) * 100),
+      }));
+
+      try {
+        const res = await fetch('/api/diagnostics/repair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ checkId: check.checkId }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const success = data.success !== false;
+          if (success) {
+            completed++;
+          } else {
+            failed++;
+          }
+          stepResults.push({
+            checkId: check.checkId,
+            name: check.name,
+            success,
+            message: data.message || (success ? 'Repaired successfully' : 'Repair failed'),
+            actionsTaken: data.actionsTaken,
+            error: data.error,
+          });
+        } else {
+          failed++;
+          stepResults.push({
+            checkId: check.checkId,
+            name: check.name,
+            success: false,
+            message: `Server returned HTTP ${res.status}`,
+          });
+        }
+      } catch (err: any) {
+        failed++;
+        stepResults.push({
+          checkId: check.checkId,
+          name: check.name,
+          success: false,
+          message: err.message || 'Network error executing repair',
+        });
+      }
+
+      setFixProgress((prev) => ({
+        ...prev,
+        percent: Math.round(((i + 1) / fixable.length) * 100),
+        completedCount: completed,
+        failedCount: failed,
+        results: [...stepResults],
+      }));
+
+      // Small real-time visual pacing so progress is clearly observable
+      await new Promise((r) => setTimeout(r, 450));
+    }
+
+    setActiveFixingId(null);
+
+    // Re-scan with deep scan to truthfully refresh overall state
+    await runScan(false);
+
+    const finalStatus = failed === 0 ? 'all_passed' : completed > 0 ? 'partial' : 'failed';
+    setFixProgress((prev) => ({
+      ...prev,
+      isActive: false,
+      finished: true,
+      percent: 100,
+      finalStatus,
+    }));
+
+    if (finalStatus === 'all_passed') {
+      setStatusNotification(`✓ All ${completed} auto-repair(s) completed successfully!`);
+    } else if (finalStatus === 'partial') {
+      setStatusNotification(`⚠️ Auto-repair completed: ${completed} fixed, ${failed} failed.`);
+    } else {
+      setStatusNotification(`❌ Auto-repair failed for ${failed} item(s).`);
+    }
+
+    const newLogs = stepResults.map((r) => `${r.success ? '✓' : '❌'} ${r.name}: ${r.message}`);
+    setRepairLogs((prev) => [...newLogs, ...prev]);
+    setIsRepairing(false);
   };
 
   const handleSimulateIssueAndAutoHeal = async () => {
@@ -187,6 +340,7 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = React.memo(({
   };
 
   const handleFixSingleIssue = async (checkId: string) => {
+    setActiveFixingId(checkId);
     try {
       const res = await fetch('/api/diagnostics/repair', {
         method: 'POST',
@@ -195,11 +349,16 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = React.memo(({
       });
       if (res.ok) {
         const result = await res.json();
-        setRepairLogs((prev) => [result.message, ...prev]);
+        const success = result.success !== false;
+        setStatusNotification(success ? `✓ Repaired: ${result.message}` : `❌ Fix failed: ${result.message}`);
+        setRepairLogs((prev) => [`${success ? '✓' : '❌'} ${result.message}`, ...prev]);
         void runScan(false);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Failed to repair ${checkId}:`, err);
+      setStatusNotification(`❌ Repair failed: ${err.message || 'Network error'}`);
+    } finally {
+      setActiveFixingId(null);
     }
   };
 
@@ -320,68 +479,213 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = React.memo(({
               </div>
             )}
 
-            {/* Prominent One-Click Auto-Fix Action Banner */}
-            {scanReport && (scanReport.summary.warnings > 0 || scanReport.summary.criticals > 0) && (
-              <div className="mt-3 flex flex-col gap-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-3.5 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Wrench className="h-5 w-5 text-cyan-400 shrink-0" />
-                  <div>
-                    <div className="font-mono text-xs font-bold text-cyan-300">
-                      {scanReport.summary.warnings + scanReport.summary.criticals} Item(s) Can Be Auto-Repaired
-                    </div>
-                    <div className="font-mono text-[10px] text-graphite">
-                      Click Auto-Fix All to automatically heal subsystems without manual terminal commands.
-                    </div>
-                  </div>
+            {/* REAL-TIME PROGRESS BAR (Active while Auto-Fix is running) */}
+            {fixProgress.isActive && (
+              <div className="mt-3.5 rounded-2xl border border-cyan-500/50 bg-cyan-950/30 p-4 font-mono shadow-lg animate-pulse-subtle">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="flex items-center gap-2 font-bold text-cyan-300">
+                    <RefreshCw className="h-4 w-4 animate-spin text-cyan-400" />
+                    Fixing: <span className="text-white">{fixProgress.currentCheckName || 'Initializing auto-repair...'}</span>
+                  </span>
+                  <span className="font-bold text-cyan-400">
+                    {fixProgress.percent}% ({fixProgress.currentStep}/{fixProgress.total} completed)
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => runScan(true)}
-                  disabled={isScanning || isRepairing || isSimulating}
-                  className="shrink-0 rounded-xl bg-cyan-500 px-4 py-2 font-mono text-xs font-black text-black shadow-lg transition hover:bg-cyan-400 active:scale-95 disabled:opacity-50"
-                >
-                  ⚡ AUTO-FIX ALL NOW
-                </button>
+
+                {/* Progress bar track */}
+                <div className="mt-2.5 h-2.5 w-full overflow-hidden rounded-full border border-white/10 bg-panel">
+                  <div
+                    className="h-full bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 transition-all duration-300 ease-out shadow-[0_0_12px_rgba(6,182,212,0.6)]"
+                    style={{ width: `${fixProgress.percent}%` }}
+                  />
+                </div>
+
+                <div className="mt-2 flex items-center justify-between text-[11px] text-graphite">
+                  <span>
+                    ✅ <strong className="text-emerald-400">{fixProgress.completedCount}</strong> fixed
+                    {fixProgress.failedCount > 0 && (
+                      <span className="ml-2 text-rose-400">
+                        ❌ <strong>{fixProgress.failedCount}</strong> failed
+                      </span>
+                    )}
+                  </span>
+                  <span>{fixProgress.total - fixProgress.currentStep} remaining</span>
+                </div>
               </div>
             )}
 
+            {/* TRUTHFUL SUMMARY CARD (Displayed after Auto-Fix completes) */}
+            {fixProgress.finished && !fixProgress.isActive && (
+              <div
+                className={`mt-3.5 rounded-2xl border p-4 font-mono shadow-lg ${
+                  fixProgress.finalStatus === 'all_passed'
+                    ? 'border-emerald-500/40 bg-emerald-950/30'
+                    : fixProgress.finalStatus === 'partial'
+                    ? 'border-amber-500/40 bg-amber-950/30'
+                    : 'border-rose-500/40 bg-rose-950/30'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {fixProgress.finalStatus === 'all_passed' ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                    ) : fixProgress.finalStatus === 'partial' ? (
+                      <AlertTriangle className="h-5 w-5 text-amber-400" />
+                    ) : (
+                      <CircleAlert className="h-5 w-5 text-rose-400" />
+                    )}
+                    <span
+                      className={`text-xs font-bold tracking-wider uppercase ${
+                        fixProgress.finalStatus === 'all_passed'
+                          ? 'text-emerald-300'
+                          : fixProgress.finalStatus === 'partial'
+                          ? 'text-amber-300'
+                          : 'text-rose-300'
+                      }`}
+                    >
+                      {fixProgress.finalStatus === 'all_passed'
+                        ? '✅ ALL FIXES COMPLETED SUCCESSFULLY'
+                        : fixProgress.finalStatus === 'partial'
+                        ? '⚠️ AUTO-FIX COMPLETED WITH WARNINGS'
+                        : '❌ AUTO-FIX FAILED'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFixProgress((prev) => ({ ...prev, finished: false }))}
+                    className="rounded-lg border border-white/10 px-2 py-0.5 text-[10px] text-graphite hover:text-white"
+                  >
+                    DISMISS
+                  </button>
+                </div>
+
+                <div className="mt-2.5 space-y-1.5 text-[11px]">
+                  {fixProgress.results.map((res, i) => (
+                    <div key={i} className="flex items-start gap-2 text-white/90">
+                      <span className="shrink-0">{res.success ? '✅' : '❌'}</span>
+                      <div>
+                        <strong className="text-white">{res.name}</strong>: {res.message}
+                        {res.error && <span className="ml-1 text-rose-300">({res.error})</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action Banner: Computed Truthfully based on real autoFixAvailable count */}
+            {!fixProgress.isActive &&
+              scanReport &&
+              (() => {
+                const nonPassed = scanReport.checks.filter((c) => c.status !== 'passed');
+                const autoFixable = nonPassed.filter((c) => c.autoFixAvailable);
+                const manualOnly = nonPassed.filter((c) => !c.autoFixAvailable);
+
+                if (autoFixable.length > 0) {
+                  return (
+                    <div className="mt-3 flex flex-col gap-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <Wrench className="h-5 w-5 text-cyan-400 shrink-0" />
+                        <div>
+                          <div className="font-mono text-xs font-bold text-cyan-300">
+                            {autoFixable.length} Item(s) Can Be Auto-Repaired
+                          </div>
+                          <div className="font-mono text-[10px] text-graphite">
+                            Click Auto-Fix All to automatically heal subsystems without manual terminal commands.
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAutoFixAll}
+                        disabled={isScanning || isRepairing || isSimulating || fixProgress.isActive}
+                        className="shrink-0 rounded-xl bg-cyan-500 px-4 py-2 font-mono text-xs font-black text-black shadow-lg transition hover:bg-cyan-400 active:scale-95 disabled:opacity-50"
+                      >
+                        ⚡ AUTO-FIX ALL NOW
+                      </button>
+                    </div>
+                  );
+                }
+
+                if (manualOnly.length > 0) {
+                  return (
+                    <div className="mt-3 flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5">
+                      <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0" />
+                      <div>
+                        <div className="font-mono text-xs font-bold text-amber-300">
+                          {manualOnly.length} Item(s) Require Manual Setup
+                        </div>
+                        <div className="font-mono text-[10px] text-graphite">
+                          These items require manual configuration (e.g. adding your API key in Settings). Automatic fixes are not applicable.
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return null;
+              })()}
+
             {/* Diagnostic Subsystem Check List */}
             <div className="mt-4 space-y-2.5">
-              {scanReport?.checks.map((check) => (
-                <div
-                  key={check.checkId}
-                  className="flex flex-col gap-2 rounded-xl border border-line bg-panel p-3 sm:flex-row sm:items-center sm:justify-between transition-colors hover:border-white/20"
-                >
-                  <div className="flex items-start gap-2.5">
-                    {check.status === 'passed' ? (
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                    ) : check.severity === 'critical' ? (
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
-                    ) : (
-                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                    )}
-                    <div>
-                      <div className="font-mono text-xs font-semibold text-ink">{check.name}</div>
-                      <div className="font-mono text-[10px] text-graphite">{check.message}</div>
-                      {check.userActionGuide && (
-                        <div className="mt-1 font-mono text-[10px] text-amber-300/90">
-                          ↳ Action: {check.userActionGuide}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+              {scanReport?.checks.map((check) => {
+                const isFixingThis = activeFixingId === check.checkId;
 
-                  {check.autoFixAvailable && check.status !== 'passed' && (
-                    <button
-                      type="button"
-                      onClick={() => handleFixSingleIssue(check.checkId)}
-                      className="shrink-0 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-400 transition hover:bg-emerald-500/20 active:scale-95"
-                    >
-                      FIX NOW
-                    </button>
-                  )}
-                </div>
-              ))}
+                return (
+                  <div
+                    key={check.checkId}
+                    className={`flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between transition-colors ${
+                      isFixingThis
+                        ? 'border-cyan-500/60 bg-cyan-950/20'
+                        : 'border-line bg-panel hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      {check.status === 'passed' ? (
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                      ) : check.severity === 'critical' ? (
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+                      ) : (
+                        <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                      )}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-semibold text-ink">{check.name}</span>
+                          {!check.autoFixAvailable && check.status !== 'passed' && (
+                            <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber-400">
+                              MANUAL SETUP
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-mono text-[10px] text-graphite">{check.message}</div>
+                        {check.userActionGuide && (
+                          <div className="mt-1 font-mono text-[10px] text-amber-300/90">
+                            ↳ Action: {check.userActionGuide}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {check.autoFixAvailable && check.status !== 'passed' && (
+                      <button
+                        type="button"
+                        onClick={() => handleFixSingleIssue(check.checkId)}
+                        disabled={isScanning || isRepairing || isSimulating || isFixingThis}
+                        className="shrink-0 flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-400 transition hover:bg-emerald-500/20 active:scale-95 disabled:opacity-50"
+                      >
+                        {isFixingThis ? (
+                          <>
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            REPAIRING...
+                          </>
+                        ) : (
+                          'FIX NOW'
+                        )}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Repair Audit Logs */}

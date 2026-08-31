@@ -18,5 +18,11 @@ worker.on('exit', (code, signal) => {
   process.exit(code || (signal ? 1 : 0));
 });
 
-process.on('SIGTERM', () => worker.kill());
-process.on('SIGINT', () => worker.kill());
+process.on('SIGTERM', () => {
+  try { worker.kill(); } catch {}
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  try { worker.kill(); } catch {}
+  process.exit(0);
+});
