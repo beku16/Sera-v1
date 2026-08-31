@@ -23,6 +23,7 @@ import {
   Boxes,
   Monitor,
   ArrowUpCircle,
+  Trash2,
 } from 'lucide-react';
 import { AssistantSettings, ColorPaletteId, VoiceName, UpdateState } from '../../types';
 import { PREDEFINED_PALETTES, getPaletteConfig } from '../../config/palettes';
@@ -570,14 +571,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               CONSOLE CONFIGURATION
             </span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-1.5 text-graphite transition hover:bg-panel hover:text-ink active:scale-95"
-            aria-label="Close settings"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenUninstall && (
+              <button
+                type="button"
+                onClick={onOpenUninstall}
+                className="flex items-center gap-1.5 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-1.5 font-mono text-[10px] font-bold text-red-400 transition hover:bg-red-500/20 active:scale-95"
+                title="Open self-uninstallation wizard with memory backup"
+              >
+                <Trash2 className="h-3 w-3" /> UNINSTALL SERA
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl p-1.5 text-graphite transition hover:bg-panel hover:text-ink active:scale-95"
+              aria-label="Close settings"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Bar — 2×3 grid: every tab always fully visible, no clipping,
@@ -893,6 +906,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   ))}
                 </div>
               </div>
+
+              {/* System Maintenance & Uninstall */}
+              {onOpenUninstall && (
+                <div className="flex items-center justify-between rounded-2xl border border-red-500/30 bg-red-500/5 p-4">
+                  <div className="space-y-1">
+                    <span className="inline-flex items-center gap-2 font-mono text-xs font-bold text-red-400">
+                      <Trash2 className="h-4 w-4" /> UNINSTALL SERA
+                    </span>
+                    <p className="font-mono text-[10px] text-graphite">
+                      Completely remove SERA with optional memory, learnings, and vault backup preservation.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onOpenUninstall}
+                    className="shrink-0 rounded-xl border border-red-500/40 bg-red-500/10 px-3.5 py-2 font-mono text-[10px] font-bold text-red-400 transition hover:bg-red-500/20 active:scale-95"
+                  >
+                    UNINSTALL...
+                  </button>
+                </div>
+              )}
             </div>
 
           ) : activeTab === 'audio' ? (

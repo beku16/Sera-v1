@@ -1043,15 +1043,26 @@ app.whenReady().then(async () => {
   startService();
   await waitForService();
   await createWindow();
+}).catch((err) => {
+  shellLog(`whenReady error: ${err.stack || err.message}`);
 });
 
 app.on('second-instance', () => focusWindow());
-process.on('uncaughtException', (error) => console.error('[ELECTRON_UNCAUGHT_EXCEPTION]', error.stack || error.message));
-process.on('unhandledRejection', (error) => console.error('[ELECTRON_UNHANDLED_REJECTION]', error));
+process.on('uncaughtException', (error) => {
+  shellLog(`uncaughtException: ${error.stack || error.message}`);
+  console.error('[ELECTRON_UNCAUGHT_EXCEPTION]', error.stack || error.message);
+});
+process.on('unhandledRejection', (error) => {
+  shellLog(`unhandledRejection: ${String(error)}`);
+  console.error('[ELECTRON_UNHANDLED_REJECTION]', error);
+});
 
-app.on('window-all-closed', () => { console.log('[ELECTRON_WINDOW_ALL_CLOSED]'); if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => {
+  shellLog('window-all-closed');
+  if (process.platform !== 'darwin') app.quit();
+});
 app.on('before-quit', () => {
-  console.log('[ELECTRON_BEFORE_QUIT]');
+  shellLog('before-quit');
   if (shuttingDown) return;
   shuttingDown = true;
   if (service && !service.killed) service.kill();

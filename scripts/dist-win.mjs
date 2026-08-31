@@ -158,4 +158,32 @@ if (rebuildResult.status === 0) {
 // 6) electron-builder: NSIS + portable + win-unpacked.
 run('electron-builder', npx, ['electron-builder', '--win', '--config', 'electron-builder.yml']);
 
+// 7) Authenticode Code Signing
+if (isWin) {
+  console.log('\n[dist-win] ── Authenticode Code Signing ──');
+  const signScript = `
+    $certs = Get-ChildItem Cert:\\CurrentUser\\My -CodeSigningCert
+    if ($certs.Count -gt 0) {
+      $cert = $certs[0]
+      $files = @(
+        'release\\win-unpacked\\Sera.exe',
+        'release\\Sera Installer.exe',
+        'release\\Sera Portable.exe'
+      )
+      foreach ($f in $files) {
+        if (Test-Path $f) {
+          $sig = Set-AuthenticodeSignature -FilePath $f -Certificate $cert -TimestampServer 'http://timestamp.digicert.com' -HashAlgorithm 'SHA256'
+          Write-Output "Signed $f (Subject: $($cert.Subject), Status: $($sig.Status))"
+        }
+      }
+    } else {
+      Write-Output "No code-signing certificate found in Cert:\\CurrentUser\\My"
+    }
+  `;
+  spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', signScript], {
+    cwd: root,
+    stdio: 'inherit',
+  });
+}
+
 console.log('\n[dist-win] Done. Artifacts in release/ — smoke-test them per docs/PACKAGED-SMOKE-TEST.md before publishing.');

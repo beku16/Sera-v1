@@ -320,6 +320,31 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = React.memo(({
               </div>
             )}
 
+            {/* Prominent One-Click Auto-Fix Action Banner */}
+            {scanReport && (scanReport.summary.warnings > 0 || scanReport.summary.criticals > 0) && (
+              <div className="mt-3 flex flex-col gap-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Wrench className="h-5 w-5 text-cyan-400 shrink-0" />
+                  <div>
+                    <div className="font-mono text-xs font-bold text-cyan-300">
+                      {scanReport.summary.warnings + scanReport.summary.criticals} Item(s) Can Be Auto-Repaired
+                    </div>
+                    <div className="font-mono text-[10px] text-graphite">
+                      Click Auto-Fix All to automatically heal subsystems without manual terminal commands.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => runScan(true)}
+                  disabled={isScanning || isRepairing || isSimulating}
+                  className="shrink-0 rounded-xl bg-cyan-500 px-4 py-2 font-mono text-xs font-black text-black shadow-lg transition hover:bg-cyan-400 active:scale-95 disabled:opacity-50"
+                >
+                  ⚡ AUTO-FIX ALL NOW
+                </button>
+              </div>
+            )}
+
             {/* Diagnostic Subsystem Check List */}
             <div className="mt-4 space-y-2.5">
               {scanReport?.checks.map((check) => (

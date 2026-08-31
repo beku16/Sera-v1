@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, Check, Cpu, Download, HardDrive, MemoryStick, Mic, Monitor, RefreshCw, Wand2, Zap } from 'lucide-react';
+import { Activity, Check, Cpu, Download, HardDrive, MemoryStick, Mic, Monitor, RefreshCw, Wand2, Zap, Trash2 } from 'lucide-react';
 import type { AssistantSettings } from '../../types';
 import { formatBytes, type PullView } from '../../local/pullClient';
 import { runVerifiedPull, IDLE_VERIFIED_PULL, type VerifiedPullState } from '../../local/modelPullClient';
@@ -225,6 +225,27 @@ export const MyPcTab: React.FC<MyPcTabProps> = ({ settings, onUpdateSettings, on
 
   return (
     <div className="space-y-5 animate-fade-up">
+
+      {/* ── System Maintenance & Uninstall ───────────────────── */}
+      {onOpenUninstall && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-red-500/30 bg-red-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-0.5">
+            <span className="inline-flex items-center gap-2 font-mono text-xs font-bold text-red-400">
+              <Trash2 className="h-4 w-4" /> UNINSTALL SERA
+            </span>
+            <p className="font-mono text-[10px] text-graphite">
+              Self-uninstall wizard: cleanly remove SERA with options to backup or wipe memories and keys.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenUninstall}
+            className="self-start sm:self-auto shrink-0 rounded-xl border border-red-500/40 bg-red-500/15 px-3.5 py-2 font-mono text-[10px] font-bold text-red-400 transition hover:bg-red-500/25 active:scale-95"
+          >
+            UNINSTALL SERA...
+          </button>
+        </div>
+      )}
 
       {/* ── Hardware audit ─────────────────────────────────── */}
       <div className="space-y-3 rounded-2xl border border-line bg-paper p-4 shadow-sm">
