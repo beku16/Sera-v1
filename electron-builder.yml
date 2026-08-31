@@ -71,6 +71,9 @@ asarUnpack:
 npmRebuild: false
 buildDependenciesFromSource: false
 
+forceCodeSigning: false
+cscLink: null
+
 win:
   icon: build/icon.ico
   executableName: Sera
