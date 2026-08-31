@@ -1,7 +1,7 @@
 {
   "name": "sera",
   "description": "Local-first real-time voice AI assistant \u2014 runs 100% offline with Ollama or online with Gemini Live, with a 36-tool computer-control agent, system diagnostics, and a double-click launcher.",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "author": "beku16",
   "private": true,
   "license": "MIT",

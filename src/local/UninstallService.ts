@@ -223,6 +223,8 @@ When you reinstall SERA in the future, you can copy these files back into:
    */
   public async executeUninstall(options: UninstallOptions): Promise<{ success: boolean; message: string; backupDir?: string }> {
     let backupDir: string | undefined;
+    const isFullWipe = !options.preserveMemory;
+    const preserveEngines = !isFullWipe && options.preserveEngines === true;
 
     // 1. Export memory backup if requested
     if (options.preserveMemory) {
@@ -246,6 +248,8 @@ When you reinstall SERA in the future, you can copy these files back into:
     const uData = userDataDir();
     const lData = localDataDir();
     const engineData = seraHomeDir();
+    const updaterDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'sera-updater');
+    const electronRoaming = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'sera-electron');
     const installDir = isPackaged()
       ? path.resolve(resourcesRoot(), '..')
       : '';
@@ -255,26 +259,51 @@ When you reinstall SERA in the future, you can copy these files back into:
       'echo Waiting for SERA to terminate...',
       'timeout /t 2 /nobreak >nul',
       'taskkill /F /IM Sera.exe >nul 2>&1',
+      'timeout /t 1 /nobreak >nul',
     ];
-
-    // Clean Local AppData (logs, cache, temp)
-    scriptLines.push(`if exist "${lData}" rmdir /s /q "${lData}" >nul 2>&1`);
-
-    // If memory is NOT preserved, clean User AppData
-    if (!options.preserveMemory) {
-      scriptLines.push(`if exist "${uData}" rmdir /s /q "${uData}" >nul 2>&1`);
-    }
-
-    // If engines NOT preserved, clean %USERPROFILE%\\.sera
-    if (!options.preserveEngines) {
-      scriptLines.push(`if exist "${engineData}" rmdir /s /q "${engineData}" >nul 2>&1`);
-    }
 
     // Remove desktop and start menu shortcuts
     const desktopShortcut = path.join(os.homedir(), 'Desktop', 'SERA.lnk');
     const startMenuShortcut = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'SERA.lnk');
     scriptLines.push(`if exist "${desktopShortcut}" del /f /q "${desktopShortcut}" >nul 2>&1`);
     scriptLines.push(`if exist "${startMenuShortcut}" del /f /q "${startMenuShortcut}" >nul 2>&1`);
+
+    // Clean Local AppData (logs, cache, temp) with retries
+    scriptLines.push(`for /l %%i in (1,1,5) do (`);
+    scriptLines.push(`  if exist "${lData}" (`);
+    scriptLines.push(`    rmdir /s /q "${lData}" >nul 2>&1`);
+    scriptLines.push(`    timeout /t 1 /nobreak >nul`);
+    scriptLines.push(`  )`);
+    scriptLines.push(`)`);
+
+    // Clean updater cache directory
+    scriptLines.push(`if exist "${updaterDir}" rmdir /s /q "${updaterDir}" >nul 2>&1`);
+
+    // In 100% Full Wipe mode: remove User AppData (%APPDATA%\SERA), .sera (%USERPROFILE%\.sera), and electron caches
+    if (isFullWipe) {
+      scriptLines.push(`for /l %%i in (1,1,5) do (`);
+      scriptLines.push(`  if exist "${uData}" (`);
+      scriptLines.push(`    rmdir /s /q "${uData}" >nul 2>&1`);
+      scriptLines.push(`    timeout /t 1 /nobreak >nul`);
+      scriptLines.push(`  )`);
+      scriptLines.push(`)`);
+
+      scriptLines.push(`for /l %%i in (1,1,5) do (`);
+      scriptLines.push(`  if exist "${engineData}" (`);
+      scriptLines.push(`    rmdir /s /q "${engineData}" >nul 2>&1`);
+      scriptLines.push(`    timeout /t 1 /nobreak >nul`);
+      scriptLines.push(`  )`);
+      scriptLines.push(`)`);
+
+      scriptLines.push(`if exist "${electronRoaming}" rmdir /s /q "${electronRoaming}" >nul 2>&1`);
+    } else {
+      // In Preserve Mode: clean port file and temp locks from .sera while keeping models/engines if requested
+      const portFile = path.join(engineData, 'sera.port');
+      scriptLines.push(`if exist "${portFile}" del /f /q "${portFile}" >nul 2>&1`);
+      if (!preserveEngines) {
+        scriptLines.push(`if exist "${engineData}" rmdir /s /q "${engineData}" >nul 2>&1`);
+      }
+    }
 
     // If installed via NSIS in Programs directory, trigger uninstaller or clean folder
     if (isPackaged() && installDir && installDir.includes('Programs')) {

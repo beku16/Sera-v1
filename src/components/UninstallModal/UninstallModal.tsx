@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   AlertTriangle,
   Shield,
@@ -55,8 +55,26 @@ export const UninstallModal: React.FC<UninstallModalProps> = ({
   const [preserveEngines, setPreserveEngines] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [isListeningForSpeech, setIsListeningForSpeech] = useState(false);
+  const [micStatus, setMicStatus] = useState<'idle' | 'listening' | 'processing' | 'error'>('idle');
   const speechRecognitionRef = useRef<any>(null);
+  const desktopUnsubRef = useRef<(() => void) | null>(null);
+
+  // Cleanup speech on unmount or close
+  useEffect(() => {
+    return () => {
+      if (desktopUnsubRef.current) {
+        desktopUnsubRef.current();
+        desktopUnsubRef.current = null;
+      }
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.stop(); } catch {}
+        speechRecognitionRef.current = null;
+      }
+      if (window.seraDesktop?.stopLocalSpeech) {
+        window.seraDesktop.stopLocalSpeech().catch(() => {});
+      }
+    };
+  }, []);
 
   // Fetch challenge and memory summary on open
   useEffect(() => {
@@ -65,6 +83,18 @@ export const UninstallModal: React.FC<UninstallModalProps> = ({
       setErrorMessage(null);
       setSuccessMessage(null);
       setExecuting(false);
+      setMicStatus('idle');
+      if (desktopUnsubRef.current) {
+        desktopUnsubRef.current();
+        desktopUnsubRef.current = null;
+      }
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.stop(); } catch {}
+        speechRecognitionRef.current = null;
+      }
+      if (window.seraDesktop?.stopLocalSpeech) {
+        window.seraDesktop.stopLocalSpeech().catch(() => {});
+      }
       return;
     }
 
@@ -90,53 +120,115 @@ export const UninstallModal: React.FC<UninstallModalProps> = ({
       .finally(() => setLoading(false));
   }, [isOpen]);
 
-  // Speech Recognition listener for spoken confirmation
-  const handleToggleVoiceInput = () => {
-    if (isListeningForSpeech) {
-      speechRecognitionRef.current?.stop?.();
-      setIsListeningForSpeech(false);
+  // Speech Recognition listener for spoken confirmation (Desktop SAPI + Web Speech API fallback)
+  const handleToggleVoiceInput = async () => {
+    if (micStatus === 'listening') {
+      if (desktopUnsubRef.current) {
+        desktopUnsubRef.current();
+        desktopUnsubRef.current = null;
+      }
+      if (window.seraDesktop?.stopLocalSpeech) {
+        try { await window.seraDesktop.stopLocalSpeech(); } catch {}
+      }
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.stop(); } catch {}
+        speechRecognitionRef.current = null;
+      }
+      setMicStatus('idle');
       return;
     }
 
+    setErrorMessage(null);
+    setMicStatus('listening');
+
+    // 1. Try Desktop Electron Speech Engine (Windows SAPI Bridge)
+    if (window.seraDesktop?.startLocalSpeech && window.seraDesktop?.onLocalSpeechTranscript) {
+      try {
+        const unsubs: Array<() => void> = [];
+        const unsubTranscript = window.seraDesktop.onLocalSpeechTranscript((payload) => {
+          if (payload?.text && payload.text.trim()) {
+            setMicStatus('processing');
+            setUserInput(payload.text.trim());
+            setTimeout(() => {
+              setMicStatus('idle');
+              if (desktopUnsubRef.current) {
+                desktopUnsubRef.current();
+                desktopUnsubRef.current = null;
+              }
+              window.seraDesktop?.stopLocalSpeech?.().catch(() => {});
+            }, 400);
+          }
+        });
+        unsubs.push(unsubTranscript);
+
+        const unsubError = window.seraDesktop.onLocalSpeechError?.((err) => {
+          console.warn('[UNINSTALL_VOICE_DESKTOP_ERROR]', err);
+          setErrorMessage("Couldn't recognize speech. Try again or type the code.");
+          setMicStatus('error');
+          if (desktopUnsubRef.current) {
+            desktopUnsubRef.current();
+            desktopUnsubRef.current = null;
+          }
+          window.seraDesktop?.stopLocalSpeech?.().catch(() => {});
+        });
+        if (unsubError) unsubs.push(unsubError);
+
+        desktopUnsubRef.current = () => {
+          unsubs.forEach((fn) => fn());
+        };
+
+        await window.seraDesktop.startLocalSpeech();
+        return;
+      } catch (err) {
+        console.warn('[UNINSTALL_DESKTOP_SPEECH_START_FAIL]', err);
+        // Fall through to browser recognition
+      }
+    }
+
+    // 2. Fallback to Browser Speech Recognition (Web Speech API)
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRec) {
-      setErrorMessage('Speech recognition is not supported in this environment. Please type the words.');
-      return;
+    if (SpeechRec) {
+      try {
+        const recognition = new SpeechRec();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        recognition.onstart = () => {
+          setMicStatus('listening');
+          setErrorMessage(null);
+        };
+
+        recognition.onresult = (event: any) => {
+          const transcript = Array.from(event.results)
+            .map((res: any) => res[0]?.transcript || '')
+            .join(' ');
+          if (transcript.trim()) {
+            setMicStatus('processing');
+            setUserInput(transcript.trim());
+          }
+        };
+
+        recognition.onerror = (err: any) => {
+          console.warn('[UNINSTALL_BROWSER_VOICE_ERROR]', err);
+          setErrorMessage("Couldn't recognize speech. Try again or type the code.");
+          setMicStatus('error');
+        };
+
+        recognition.onend = () => {
+          setMicStatus('idle');
+        };
+
+        speechRecognitionRef.current = recognition;
+        recognition.start();
+        return;
+      } catch (e) {
+        console.warn('[UNINSTALL_BROWSER_VOICE_EXCEPTION]', e);
+      }
     }
 
-    try {
-      const recognition = new SpeechRec();
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onstart = () => {
-        setIsListeningForSpeech(true);
-        setErrorMessage(null);
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .map((res: any) => res[0]?.transcript || '')
-          .join(' ');
-        setUserInput(transcript);
-      };
-
-      recognition.onerror = (err: any) => {
-        console.warn('[UNINSTALL_VOICE_ERROR]', err);
-        setIsListeningForSpeech(false);
-      };
-
-      recognition.onend = () => {
-        setIsListeningForSpeech(false);
-      };
-
-      speechRecognitionRef.current = recognition;
-      recognition.start();
-    } catch (e) {
-      setErrorMessage('Failed to start microphone listener. Please type the confirmation code.');
-      setIsListeningForSpeech(false);
-    }
+    setErrorMessage('Speech recognition is not supported in this environment. Please type the words.');
+    setMicStatus('error');
   };
 
   // Validation logic
@@ -303,7 +395,10 @@ export const UninstallModal: React.FC<UninstallModalProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setPreserveMemory(true)}
+                  onClick={() => {
+                    setPreserveMemory(true);
+                    setPreserveEngines(true);
+                  }}
                   className={`flex flex-col items-start gap-1 rounded-2xl border p-3 text-left transition-all ${
                     preserveMemory
                       ? 'border-emerald-500/50 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
@@ -321,7 +416,10 @@ export const UninstallModal: React.FC<UninstallModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setPreserveMemory(false)}
+                  onClick={() => {
+                    setPreserveMemory(false);
+                    setPreserveEngines(false);
+                  }}
                   className={`flex flex-col items-start gap-1 rounded-2xl border p-3 text-left transition-all ${
                     !preserveMemory
                       ? 'border-red-500/50 bg-red-500/10 shadow-[0_0_15px_rgba(239,68,68,0.15)]'
@@ -370,22 +468,45 @@ export const UninstallModal: React.FC<UninstallModalProps> = ({
                     type="text"
                     value={userInput}
                     onChange={(e) => setUserInput(e.target.value)}
-                    placeholder='Type the words above or click mic to speak...'
+                    placeholder={
+                      micStatus === 'listening'
+                        ? 'Listening... speak the words above'
+                        : 'Type the words above or click mic to speak...'
+                    }
                     disabled={executing}
-                    className="w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 font-mono text-xs text-white placeholder-white/30 focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400"
+                    className={`w-full rounded-xl border px-3.5 py-2.5 font-mono text-xs text-white focus:outline-none transition-all ${
+                      micStatus === 'listening'
+                        ? 'border-red-400 bg-red-950/30 placeholder-red-300 animate-pulse'
+                        : 'border-white/15 bg-black/50 placeholder-white/30 focus:border-red-400 focus:ring-1 focus:ring-red-400'
+                    }`}
                   />
                   <button
                     type="button"
                     onClick={handleToggleVoiceInput}
                     disabled={executing}
                     className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all ${
-                      isListeningForSpeech
-                        ? 'border-red-400 bg-red-500 text-white animate-pulse'
-                        : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
+                      micStatus === 'listening'
+                        ? 'border-red-400 bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.6)] animate-pulse'
+                        : micStatus === 'processing'
+                        ? 'border-cyan-400 bg-cyan-950/40 text-cyan-300'
+                        : micStatus === 'error'
+                        ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                        : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white active:scale-95'
                     }`}
-                    title={isListeningForSpeech ? 'Listening... speak the words' : 'Click to speak the words'}
+                    title={
+                      micStatus === 'listening'
+                        ? 'Listening... click to stop'
+                        : micStatus === 'processing'
+                        ? 'Processing speech...'
+                        : 'Click mic to speak the confirmation words'
+                    }
+                    aria-label="Toggle voice input"
                   >
-                    <Mic className="h-4 w-4" />
+                    {micStatus === 'processing' ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
+                    ) : (
+                      <Mic className={`h-4 w-4 ${micStatus === 'listening' ? 'text-white' : ''}`} />
+                    )}
                   </button>
                 </div>
 

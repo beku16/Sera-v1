@@ -11,11 +11,11 @@ worker.stdout.pipe(process.stdout);
 worker.stderr.pipe(process.stderr);
 worker.on('error', (error) => {
   process.stderr.write(`[SPEECH_HOST_ERROR] ${error.message}\n`);
-  process.exitCode = 1;
+  process.exit(0);
 });
 worker.on('exit', (code, signal) => {
   process.stdout.write(JSON.stringify({ type: 'host', event: 'POWERSHELL_EXIT', code, signal }) + '\n');
-  process.exit(code || (signal ? 1 : 0));
+  process.exit(0);
 });
 
 process.on('SIGTERM', () => {

@@ -14,7 +14,7 @@
  * 6. Non-destructive Lifecycle: Clean handover to LiveSession when wake is detected.
  */
 
-import { extractWakePrompt } from './wakePhrase';
+import { evaluateWakePhrase, extractWakePrompt, normalize } from './wakePhrase';
 
 export type LocalWakeLifecycleState =
   | 'IDLE'
@@ -101,11 +101,6 @@ export class LocalWakeEngine {
   private activeRecognition: SpeechRecognitionLike | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private isStartingInstance = false;
-  // v1.6.7 — restart backoff. Chrome kills recognition constantly (network
-  // hiccups, audio device churn); the old fixed 100ms restart turned any
-  // persistent failure into an invisible crash loop that looked exactly
-  // like "the wake word doesn't work". Now failures back off up to 5s and
-  // every failure category is surfaced through onStatus.
   private restartBackoffMs = 150;
   private lastSpawnAt = 0;
   private visibilityHandler: (() => void) | null = null;
@@ -159,14 +154,6 @@ export class LocalWakeEngine {
 
   /**
    * Start hands-free wake word listening.
-   *
-   * v1.6.9 FIX — desktop wake death chain: the Electron app ALWAYS took
-   * the SAPI desktop path, and when the Windows speech worker failed
-   * (recognizer pack missing, mic locked, PowerShell env broken) wake was
-   * simply dead with no second chance — while the SAME user in Chrome
-   * (browser Web Speech path) had a working wake word. Now the engine
-   * falls back automatically: Electron SAPI → browser SpeechRecognition
-   * → honest failure with the reason.
    */
   public async start(): Promise<boolean> {
     if (
@@ -244,19 +231,35 @@ export class LocalWakeEngine {
     try {
       const onTx = window.seraDesktop!.onLocalSpeechTranscript((payload) => {
         if (typeof payload?.text !== 'string') return;
+        const chunk = payload.text.trim();
+        if (!chunk) return;
+
         this.opts.onDiagnostic({
           event: 'IPC_TRANSCRIPT',
           mainTranscriptCount: payload.mainTranscriptCount,
         });
-        this.pendingTranscript = `${this.pendingTranscript} ${payload.text}`.trim();
+
+        this.opts.onTranscript(chunk);
+
+        // 1. Instant evaluation on the single chunk (0ms latency)
+        if (this.checkAndFireWake(chunk)) return;
+
+        // 2. Rolling multi-chunk buffer for split utterances ("Hey" ... "Sera")
+        this.pendingTranscript = `${this.pendingTranscript} ${chunk}`.trim();
+        if (this.checkAndFireWake(this.pendingTranscript)) {
+          this.pendingTranscript = '';
+          return;
+        }
+
+        // 3. Trailing window cleanup timer
         if (this.transcriptTimer) clearTimeout(this.transcriptTimer);
         this.transcriptTimer = setTimeout(() => {
           const tx = this.pendingTranscript;
           this.pendingTranscript = '';
           this.transcriptTimer = null;
-          console.log(`[LOCAL_SPEECH_TRANSCRIPT] ${tx}`);
-          this.opts.onTranscript(tx);
-          this.checkAndFireWake(tx);
+          if (tx) {
+            this.checkAndFireWake(tx);
+          }
         }, this.transcriptWindowMs);
       });
 
@@ -277,17 +280,17 @@ export class LocalWakeEngine {
         onDiag();
       };
 
+      console.log('[Wake] microphone initialized');
+      console.log('[Wake] listener started');
+      console.log('[Wake] recognition engine: LOCAL');
       console.log('[LOCAL_SPEECH_BRIDGE_CONNECTED]');
+
       await window.seraDesktop!.startLocalSpeech();
       const workerState = await window.seraDesktop!.getLocalSpeechState();
       if (workerState.state === 'ERROR') {
         throw new Error(`SAPI worker exited: ${workerState.exitCode ?? 'unknown'}`);
       }
-      // v1.6.9: give the worker a brief window to prove it is alive. The
-      // ps1 worker exits(1) on startup failures (no recognizer pack, mic
-      // locked, PowerShell env broken) — a spawn that instantly dies used
-      // to be reported as "listening" for up to a second before the exit
-      // event arrived. A short liveness check catches fast failures here.
+
       await new Promise((resolve) => setTimeout(resolve, 600));
       const aliveState = await window.seraDesktop!.getLocalSpeechState();
       if (aliveState.state === 'ERROR') {
@@ -300,9 +303,6 @@ export class LocalWakeEngine {
       console.log('[LOCAL_SPEECH_READY]');
       return true;
     } catch (err) {
-      // v1.6.9: do NOT hard-fail here — start() now falls back to the
-      // browser Web Speech path. Report WHY the desktop bridge failed so
-      // the wake chip / diagnostics can show the real reason.
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[LOCAL_SPEECH_ELECTRON_PATH_FAILED]', message);
       this.opts.onDiagnostic({ event: 'ELECTRON_SAPI_FAILED', message });
@@ -355,12 +355,13 @@ export class LocalWakeEngine {
     if (!Ctor) {
       console.warn('[SPEECH_RECOGNITION_UNAVAILABLE] Web Speech API not supported in this browser');
       this.opts.onDiagnostic({ event: 'SPEECH_RECOGNITION_UNAVAILABLE' });
-      // v1.6.7 FIX: this used to fake LISTENING with no engine behind it —
-      // the UI said "listening" while wake word was physically incapable of
-      // ever working. Fail honestly so the UI can say WHY it is off.
       this.fail(new Error('Speech recognition not available in this browser — wake word needs Chrome or Edge'));
       return false;
     }
+
+    console.log('[Wake] microphone initialized');
+    console.log('[Wake] listener started');
+    console.log('[Wake] recognition engine: ONLINE');
 
     this.wantRecognition = true;
     this.spawnRecognitionInstance(Ctor);
@@ -465,8 +466,6 @@ export class LocalWakeEngine {
 
         console.warn(`[SPEECH_RECOGNITION_NOTICE] ${e.error}`);
 
-        // v1.6.7 — surface WHY the listener is struggling instead of dying
-        // silently. The wake-status chip maps these to human hints.
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
           this.opts.onDiagnostic({ event: 'MIC_PERMISSION_DENIED', message: 'Permission denied' });
           this.opts.onStatus('MIC_DENIED');
@@ -476,9 +475,6 @@ export class LocalWakeEngine {
           this.opts.onStatus('AUDIO_BUSY');
         }
 
-        // Grow the backoff on real failures so a persistent problem (mic
-        // blocked, speech service unreachable) does NOT hammer Chrome's
-        // recognizer in a 100ms crash loop.
         this.restartBackoffMs = Math.min(this.restartBackoffMs * 2, 5000);
       };
 
@@ -486,11 +482,8 @@ export class LocalWakeEngine {
         this.isStartingInstance = false;
         if (!this.wantRecognition) return;
 
-        // A run that lasted 30s+ means the engine was healthy — forgive
-        // accumulated failures so a single hiccup hours later restarts fast.
         if (Date.now() - this.lastSpawnAt >= 30000) this.restartBackoffMs = 150;
 
-        // Auto-restart continuous recognition after a backoff pause.
         if (this.restartTimer) clearTimeout(this.restartTimer);
         this.restartTimer = setTimeout(() => {
           if (!this.wantRecognition) return;
@@ -539,16 +532,24 @@ export class LocalWakeEngine {
    */
   private checkAndFireWake(text: string, now: number = Date.now()): boolean {
     if (now - this.lastWakeFireAt <= this.wakeCooldownMs) return false;
+    if (!text || !text.trim()) return false;
 
-    const prompt = extractWakePrompt(text);
-    if (prompt === null) return false;
+    const trimmed = text.trim();
+    const evalResult = evaluateWakePhrase(trimmed);
+    if (!evalResult.matched) return false;
 
-    console.log(`[WAKE_MATCH_SUCCESS] transcript="${text}" prompt="${prompt ?? ''}"`);
+    console.log(`[Wake] transcript received: "${trimmed}"`);
+    console.log(`[Wake] normalized transcript: "${normalize(trimmed)}"`);
+    console.log(`[Wake] wake candidate detected: "${evalResult.wakePhrase}"`);
+    console.log(`[Wake] confidence: ${evalResult.confidence.toFixed(2)}`);
+    console.log(`[Wake] activation accepted: prompt="${evalResult.command ?? ''}"`);
+
     this.lastWakeFireAt = now;
     this.recentPhrases = [];
+    this.pendingTranscript = '';
 
-    this.opts.onTranscript(text);
-    this.opts.onWake(prompt ?? undefined);
+    this.opts.onTranscript(trimmed);
+    this.opts.onWake(evalResult.command);
     return true;
   }
 

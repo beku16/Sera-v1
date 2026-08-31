@@ -966,11 +966,11 @@ ipcMain.handle('local-speech-start', () => {
   });
   worker.stderr.on('data', (chunk) => console.error('[SPEECH_WORKER_STDERR]', String(chunk).trim()));
   worker.on('exit', (code, signal) => {
-    const isCleanExit = code === 0 || worker.killed || signal === 'SIGTERM' || signal === 'SIGINT';
+    const isCleanExit = code === 0 || code === 4294770688 || code === 3221225786 || worker.killed || worker._isStopping || signal === 'SIGTERM' || signal === 'SIGINT';
     localSpeechState = isCleanExit ? 'STOPPED' : 'ERROR';
     localSpeechExitCode = code;
-    console.log(`[SPEECH_WORKER_EXIT] pid=${worker.pid} code=${code ?? 'unknown'} signal=${signal || worker.signalCode || 'none'} killed=${worker.killed} isCleanExit=${isCleanExit}`);
-    if (!worker.killed && code !== 0 && code !== null && mainWindow && !mainWindow.isDestroyed()) {
+    console.log(`[SPEECH_WORKER_EXIT] pid=${worker.pid} code=${code ?? 'unknown'} signal=${signal || worker.signalCode || 'none'} killed=${worker.killed} isStopping=${Boolean(worker._isStopping)} isCleanExit=${isCleanExit}`);
+    if (!isCleanExit && code !== null && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('local-speech-error', { message: `Local speech process stopped (exit code ${code}).` });
     }
     if (localSpeech === worker) {
@@ -1011,10 +1011,14 @@ ipcMain.handle('local-speech-stop', () => {
   localSpeechClients = Math.max(0, localSpeechClients - 1);
   console.log(`[LOCAL_SPEECH_STOP_REQUESTED] owners=${localSpeechClients}`);
   if (localSpeechClients > 0) return true;
+  if (localSpeech) {
+    localSpeech._isStopping = true;
+  }
   if (localSpeechStopTimer) clearTimeout(localSpeechStopTimer);
   localSpeechStopTimer = setTimeout(() => {
     if (localSpeech && !localSpeech.killed) {
       console.log(`[LOCAL_SPEECH_STOP] pid=${localSpeech.pid}`);
+      localSpeech._isStopping = true;
       localSpeech.kill();
     }
     localSpeech = null;

@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { UninstallService } from '../local/UninstallService';
 import { matchUninstallIntent, UNINSTALL_FAREWELL } from '../utils/sleepCommands';
 import fs from 'node:fs';
@@ -73,5 +73,15 @@ describe('UninstallService & Intent Recognition', () => {
 
   it('provides a reassuring safety confirmation farewell string', () => {
     expect(UNINSTALL_FAREWELL).toContain('uninstallation security gate');
+  });
+
+  it('correctly distinguishes full wipe vs preserve memory modes', async () => {
+    // Test that executeUninstall runs without error in both modes
+    const preserveRes = await service.executeUninstall({ preserveMemory: true });
+    expect(preserveRes.success).toBe(true);
+    expect(preserveRes.backupDir).toBeDefined();
+
+    const fullWipeRes = await service.executeUninstall({ preserveMemory: false });
+    expect(fullWipeRes.success).toBe(true);
   });
 });

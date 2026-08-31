@@ -433,9 +433,10 @@ app.post('/api/uninstall/execute', heavyApiLimiter, async (req, res) => {
       return;
     }
 
+    const isFullWipe = preserveMemory === false;
     const result = await defaultUninstallService.executeUninstall({
-      preserveMemory: preserveMemory !== false,
-      preserveEngines: preserveEngines === true,
+      preserveMemory: !isFullWipe,
+      preserveEngines: !isFullWipe && preserveEngines === true,
     });
     res.json(result);
   } catch (error) {

@@ -99,6 +99,7 @@ public sealed class SeraSpeechBridge : IDisposable {
     recognizer.AudioLevelUpdated += OnAudioLevelUpdated;
     recognizer.AudioSignalProblemOccurred += OnAudioSignalProblemOccurred;
     recognizer.AudioStateChanged += OnAudioStateChanged;
+    recognizer.SpeechHypothesized += OnSpeechHypothesized;
     recognizer.SpeechRecognized += OnSpeechRecognized;
     recognizer.RecognizeCompleted += OnRecognizeCompleted;
   }
@@ -135,6 +136,13 @@ public sealed class SeraSpeechBridge : IDisposable {
   private void OnAudioStateChanged(object sender, AudioStateChangedEventArgs e) {
     lastAudioEventUtc = DateTime.UtcNow;
     Write("diagnostic", "event", "SAPI_AUDIO_STATE", "state", e.AudioState.ToString());
+  }
+
+  private void OnSpeechHypothesized(object sender, SpeechHypothesizedEventArgs e) {
+    lastAudioEventUtc = DateTime.UtcNow;
+    if (e.Result != null && !string.IsNullOrWhiteSpace(e.Result.Text)) {
+      Write("transcript", "text", e.Result.Text, "confidence", e.Result.Confidence.ToString(System.Globalization.CultureInfo.InvariantCulture), "isHypothesis", "true");
+    }
   }
 
   private void OnSpeechRecognized(object sender, SpeechRecognizedEventArgs e) {
